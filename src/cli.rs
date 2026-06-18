@@ -54,11 +54,44 @@ pub struct Cli {
 
     #[arg(long = "version", default_value_t = false)]
     pub version: bool,
+
+    // New features from C++ v1.1
+    #[arg(long = "pid")]
+    pub pid: Option<u32>,
+
+    #[arg(long = "process")]
+    pub process: Option<String>,
+
+    #[arg(long = "class-name")]
+    pub class_name: Option<String>,
+
+    #[arg(long = "require-unique", default_value_t = false)]
+    pub require_unique: bool,
+
+    #[arg(long = "delay-ms", default_value_t = 0)]
+    pub delay_ms: u32,
+
+    #[arg(long = "server", default_value_t = false)]
+    pub server: bool,
+
+    #[arg(long = "client")]
+    pub client: Option<String>,
+
+    #[arg(long = "pipe", default_value = "wgccli")]
+    pub pipe: String,
+
+    #[arg(long = "doctor", default_value_t = false)]
+    pub doctor: bool,
 }
 
 impl Cli {
     pub fn has_target(&self) -> bool {
-        self.title.is_some() || self.hwnd.is_some()
+        self.title.is_some() || self.hwnd.is_some() || self.pid.is_some()
+            || self.process.is_some() || self.class_name.is_some()
+    }
+
+    pub fn has_filter(&self) -> bool {
+        self.pid.is_some() || self.process.is_some() || self.class_name.is_some()
     }
 }
 
@@ -85,21 +118,35 @@ wgccli - Windows Graphics Capture command-line tool
 Usage:
   wgccli.exe --title <text> [--exact] --out <dir-or-file> [options]
   wgccli.exe --hwnd <hex-or-decimal> --out <dir-or-file> [options]
-  wgccli.exe --list
+  wgccli.exe --pid <pid> --out <dir-or-file> [options]
+  wgccli.exe --list [--json]
+  wgccli.exe --server [--pipe <name>]
+  wgccli.exe --client <json> [--pipe <name>]
+  wgccli.exe --doctor
 
 Required (one of):
   --title <text>             Match window by title (partial, case-insensitive)
   --hwnd <hex-or-decimal>    Capture by window handle
+  --pid <pid>                Capture by process ID
   --list                     List candidate windows
+  --server                   Start named pipe server
+  --client <json>            Send request to server via pipe
+  --doctor                   Run diagnostics
 
 Options:
   --exact                    Exact title match (case-insensitive)
   --out <dir-or-file>        Output directory or full PNG file path
   --json                     JSON output
   --timeout-ms <number>      Wait for first frame timeout (default: 3000)
+  --delay-ms <number>        Delay before capture (default: 0)
   --include-minimized        Include minimized windows in list (default: true)
   --no-restore               Do not try to restore minimized window
   --restore                  Try to restore window before capture (default: true)
+  --pid <pid>                Filter by process ID
+  --process <name>           Filter by process name
+  --class-name <name>        Filter by window class name
+  --require-unique           Fail if multiple windows match
+  --pipe <name>              Named pipe name (default: wgccli)
   --help                     Print this help
   --version                  Print version
 
@@ -107,5 +154,11 @@ Examples:
   wgccli.exe --title \"Notepad\" --out C:\\Temp
   wgccli.exe --title \"Android Studio\" --exact --out C:\\Screenshots
   wgccli.exe --hwnd 0x00123456 --out C:\\Screenshots --json
-  wgccli.exe --list"
+  wgccli.exe --pid 1234 --out C:\\Temp
+  wgccli.exe --process notepad --out C:\\Temp
+  wgccli.exe --list
+  wgccli.exe --list --json
+  wgccli.exe --server
+  wgccli.exe --client \"{\\\"action\\\":\\\"list\\\"}\"
+  wgccli.exe --doctor"
 }

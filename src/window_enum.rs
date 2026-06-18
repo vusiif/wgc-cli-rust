@@ -179,6 +179,40 @@ pub fn find_best_match(windows: &[WindowInfo], query: &str, exact: bool) -> Opti
     candidates.first().map(|(w, _, _)| (*w).clone())
 }
 
+pub fn filter_windows(
+    windows: &[WindowInfo],
+    pid: Option<u32>,
+    process: Option<&str>,
+    class_name: Option<&str>,
+) -> Vec<WindowInfo> {
+    windows.iter().filter(|w| {
+        if !w.visible {
+            return false;
+        }
+        let width = w.rect.right - w.rect.left;
+        let height = w.rect.bottom - w.rect.top;
+        if width <= 1 && height <= 1 && !w.minimized {
+            return false;
+        }
+        if let Some(pid_filter) = pid {
+            if w.pid != pid_filter {
+                return false;
+            }
+        }
+        if let Some(proc_filter) = process {
+            if !w.title.to_lowercase().contains(&proc_filter.to_lowercase()) {
+                return false;
+            }
+        }
+        if let Some(cls_filter) = class_name {
+            if !w.class_name.to_lowercase().contains(&cls_filter.to_lowercase()) {
+                return false;
+            }
+        }
+        true
+    }).cloned().collect()
+}
+
 pub fn print_window_list(windows: &[WindowInfo]) {
     println!(
         "{:<20} {:<8} {:<7} {:<7} {:<12} {:<24} Title",

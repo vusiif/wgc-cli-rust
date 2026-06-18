@@ -14,7 +14,7 @@ fn hwnd_to_hex(hwnd: i64) -> String {
     format!("0x{hwnd:016X}")
 }
 
-fn escape_json_string(s: &str) -> String {
+pub fn escape_json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     for c in s.chars() {
         match c {

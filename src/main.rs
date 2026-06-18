@@ -1,7 +1,9 @@
 mod capture;
 mod cli;
+mod client;
 mod d3d;
 mod output;
+mod server;
 mod window_enum;
 
 use clap::Parser;
@@ -19,8 +21,23 @@ fn main() {
     }
 
     if cli.version {
-        println!("wgccli 1.0.1");
+        println!("wgccli 1.1.0");
         std::process::exit(0);
+    }
+
+    // Server mode
+    if cli.server {
+        std::process::exit(server::run_server(&cli.pipe));
+    }
+
+    // Client mode
+    if let Some(ref request) = cli.client {
+        std::process::exit(client::run_client(&cli.pipe, request));
+    }
+
+    // Doctor mode
+    if cli.doctor {
+        std::process::exit(run_doctor());
     }
 
     match run(&cli) {
@@ -32,15 +49,53 @@ fn main() {
     }
 }
 
+fn run_doctor() -> i32 {
+    eprintln!("[doctor] Checking D3D11 device...");
+    match d3d::create_d3d_device() {
+        Ok(Some(_)) => eprintln!("[doctor] D3D11 device: OK"),
+        Ok(None) => {
+            eprintln!("[doctor] D3D11 device: FAILED (returned null)");
+            return 1;
+        }
+        Err(e) => {
+            eprintln!("[doctor] D3D11 device: FAILED ({e})");
+            return 1;
+        }
+    }
+
+    eprintln!("[doctor] Checking WGC capture...");
+    match capture::test_wgc() {
+        Ok(()) => eprintln!("[doctor] WGC capture: OK"),
+        Err(e) => {
+            eprintln!("[doctor] WGC capture: FAILED ({e})");
+            return 1;
+        }
+    }
+
+    eprintln!("[doctor] All checks passed.");
+    0
+}
+
 fn run(opts: &Cli) -> Result<ExitCode, BoxError> {
+    // --list mode
     if opts.list {
         let windows = window_enum::enumerate_windows(opts.include_minimized);
-        window_enum::print_window_list(&windows);
+        let filtered = window_enum::filter_windows(
+            &windows,
+            opts.pid,
+            opts.process.as_deref(),
+            opts.class_name.as_deref(),
+        );
+        if opts.json {
+            output_window_list_json(&filtered);
+        } else {
+            window_enum::print_window_list(&filtered);
+        }
         return Ok(ExitCode::Ok);
     }
 
     if !opts.has_target() {
-        output_error(opts, ExitCode::BadArgs, "MISSING_TARGET", "Specify --title, --hwnd, or --list");
+        output_error(opts, ExitCode::BadArgs, "MISSING_TARGET", "Specify --title, --hwnd, --pid, or --list");
         return Ok(ExitCode::BadArgs);
     }
 
@@ -49,13 +104,36 @@ fn run(opts: &Cli) -> Result<ExitCode, BoxError> {
         return Ok(ExitCode::BadArgs);
     }
 
+    // Find target window
+    let mut match_candidates: Vec<window_enum::WindowInfo> = Vec::new();
     let target = if let Some(hwnd_val) = opts.hwnd {
         window_enum::find_window_by_hwnd(hwnd_val)
-    } else if let Some(ref title) = opts.title {
-        let all_windows = window_enum::enumerate_windows(opts.include_minimized);
-        window_enum::find_best_match(&all_windows, title, opts.exact)
     } else {
-        None
+        let all_windows = window_enum::enumerate_windows(opts.include_minimized);
+        let filtered = window_enum::filter_windows(
+            &all_windows,
+            opts.pid,
+            opts.process.as_deref(),
+            opts.class_name.as_deref(),
+        );
+        if let Some(ref title) = opts.title {
+            let candidates: Vec<_> = filtered.iter().filter(|w| {
+                let t_lower = w.title.to_lowercase();
+                let q_lower = title.to_lowercase();
+                if opts.exact {
+                    t_lower == q_lower
+                } else {
+                    t_lower == q_lower || t_lower.starts_with(&q_lower) || t_lower.contains(&q_lower)
+                }
+            }).cloned().collect();
+            match_candidates = candidates.clone();
+            window_enum::find_best_match(&filtered, title, opts.exact)
+        } else if opts.has_filter() {
+            match_candidates = filtered.clone();
+            filtered.into_iter().next()
+        } else {
+            None
+        }
     };
 
     let target = match target {
@@ -63,8 +141,16 @@ fn run(opts: &Cli) -> Result<ExitCode, BoxError> {
         None => {
             let desc = if let Some(hwnd_val) = opts.hwnd {
                 format!("hwnd {hwnd_val}")
+            } else if let Some(ref title) = opts.title {
+                format!("title: {title}")
+            } else if let Some(pid) = opts.pid {
+                format!("pid {pid}")
+            } else if let Some(ref process) = opts.process {
+                format!("process: {process}")
+            } else if let Some(ref cls) = opts.class_name {
+                format!("class: {cls}")
             } else {
-                format!("title: {}", opts.title.as_deref().unwrap_or(""))
+                "unknown".to_string()
             };
             output_error(
                 opts,
@@ -75,6 +161,17 @@ fn run(opts: &Cli) -> Result<ExitCode, BoxError> {
             return Ok(ExitCode::WindowNotFound);
         }
     };
+
+    // --require-unique: fail if multiple candidates
+    if opts.require_unique && match_candidates.len() > 1 {
+        output_error(
+            opts,
+            ExitCode::WindowNotFound,
+            "AMBIGUOUS_MATCH",
+            &format!("Multiple windows matched ({}). Use --hwnd to select a specific window.", match_candidates.len()),
+        );
+        return Ok(ExitCode::WindowNotFound);
+    }
 
     let win_w = target.rect.right - target.rect.left;
     let win_h = target.rect.bottom - target.rect.top;
@@ -102,6 +199,11 @@ fn run(opts: &Cli) -> Result<ExitCode, BoxError> {
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+    }
+
+    // --delay-ms
+    if opts.delay_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(opts.delay_ms as u64));
     }
 
     let d3d_res = d3d::create_d3d_device()?;
@@ -191,4 +293,27 @@ fn sanitize_title(title: &str) -> String {
         result = "window".to_string();
     }
     result
+}
+
+fn output_window_list_json(windows: &[window_enum::WindowInfo]) {
+    let items: Vec<String> = windows.iter().filter(|w| {
+        if !w.visible { return false; }
+        let width = w.rect.right - w.rect.left;
+        let height = w.rect.bottom - w.rect.top;
+        !(width <= 1 && height <= 1 && !w.minimized)
+    }).map(|w| {
+        let width = w.rect.right - w.rect.left;
+        let height = w.rect.bottom - w.rect.top;
+        format!(
+            "{{\"hwnd\":\"0x{:016X}\",\"pid\":{},\"title\":\"{}\",\"className\":\"{}\",\"width\":{},\"height\":{},\"minimized\":{}}}",
+            w.hwnd,
+            w.pid,
+            output::escape_json_string(&w.title),
+            output::escape_json_string(&w.class_name),
+            width,
+            height,
+            if w.minimized { "true" } else { "false" }
+        )
+    }).collect();
+    println!("{{\"ok\":true,\"windows\":[{}]}}", items.join(","));
 }

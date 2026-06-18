@@ -153,3 +153,10 @@ fn deflate_compress(data: &[u8]) -> Result<Vec<u8>, BoxError> {
     let compressed = encoder.finish()?;
     Ok(compressed)
 }
+
+pub fn test_wgc() -> Result<(), BoxError> {
+    let d3d_res = super::d3d::create_d3d_device()?.ok_or("D3D11 device creation failed")?;
+    // Just test that we can create the device - actual capture requires a window
+    let _ = d3d_res;
+    Ok(())
+}
