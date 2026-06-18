@@ -4,10 +4,11 @@ mod d3d;
 mod output;
 mod window_enum;
 
-use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, ExitCode};
 use output::{output_error, output_success, MatchedWindow};
+
+type BoxError = Box<dyn std::error::Error>;
 
 fn main() {
     let cli = Cli::parse();
@@ -31,7 +32,7 @@ fn main() {
     }
 }
 
-fn run(opts: &Cli) -> Result<ExitCode> {
+fn run(opts: &Cli) -> Result<ExitCode, BoxError> {
     if opts.list {
         let windows = window_enum::enumerate_windows(opts.include_minimized);
         window_enum::print_window_list(&windows);
@@ -147,9 +148,26 @@ fn run(opts: &Cli) -> Result<ExitCode> {
 }
 
 fn generate_png_path(dir: &str, title: &str) -> String {
-    let now = chrono::Local::now();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let secs_in_day = now % 86400;
+    let hours = secs_in_day / 3600;
+    let minutes = (secs_in_day % 3600) / 60;
+    let seconds = secs_in_day % 60;
+    let days = now / 86400 + 719468;
+    let era = days / 146097;
+    let doe = days - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
     let sanitized = sanitize_title(title);
-    let filename = format!("{}-{sanitized}.png", now.format("%Y%m%d-%H%M%S"));
+    let filename = format!("{:04}{:02}{:02}-{:02}{:02}{:02}-{sanitized}.png", y, m, d, hours, minutes, seconds);
     std::path::Path::new(dir)
         .join(filename)
         .to_string_lossy()

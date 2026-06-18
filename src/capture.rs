@@ -1,6 +1,7 @@
-use anyhow::Result;
 use std::io::Write;
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
+
+type BoxError = Box<dyn std::error::Error>;
 
 pub struct CapturedImage {
     pub width: u32,
@@ -34,7 +35,7 @@ pub fn capture_window(
     device: &ID3D11Device,
     hwnd: i64,
     timeout_ms: u32,
-) -> Result<Option<CapturedImage>> {
+) -> Result<Option<CapturedImage>, BoxError> {
     unsafe {
         let _ = windows::Win32::System::WinRT::RoInitialize(
             windows::Win32::System::WinRT::RO_INIT_MULTITHREADED,
@@ -46,10 +47,7 @@ pub fn capture_window(
     let mut cpp_result = unsafe { wgc_capture_window(device_raw, hwnd as u64, timeout_ms) };
 
     if !cpp_result.success {
-        return Err(anyhow::anyhow!(
-            "WGC capture failed with error code: {}",
-            cpp_result.error_code
-        ));
+        return Err(format!("WGC capture failed with error code: {}", cpp_result.error_code).into());
     }
 
     let img = CapturedImage {
@@ -66,7 +64,7 @@ pub fn capture_window(
     Ok(Some(img))
 }
 
-pub fn save_png(image: &CapturedImage, path: &str) -> Result<()> {
+pub fn save_png(image: &CapturedImage, path: &str) -> Result<(), BoxError> {
     let file = std::fs::File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
 
@@ -110,7 +108,7 @@ pub fn save_png(image: &CapturedImage, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn write_chunk(writer: &mut impl std::io::Write, chunk_type: &[u8; 4], data: &[u8]) -> Result<()> {
+fn write_chunk(writer: &mut impl std::io::Write, chunk_type: &[u8; 4], data: &[u8]) -> Result<(), BoxError> {
     writer.write_all(&(data.len() as u32).to_be_bytes())?;
     writer.write_all(chunk_type)?;
     writer.write_all(data)?;
@@ -149,7 +147,7 @@ impl Crc32 {
     }
 }
 
-fn deflate_compress(data: &[u8]) -> Result<Vec<u8>> {
+fn deflate_compress(data: &[u8]) -> Result<Vec<u8>, BoxError> {
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     encoder.write_all(data)?;
     let compressed = encoder.finish()?;
