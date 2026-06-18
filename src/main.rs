@@ -19,7 +19,7 @@ fn main() {
     }
 
     if cli.version {
-        println!("wgccli 1.0.0");
+        println!("wgccli 1.0.1");
         std::process::exit(0);
     }
 
