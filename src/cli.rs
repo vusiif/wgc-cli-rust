@@ -1,164 +1,208 @@
-use clap::Parser;
+use std::path::PathBuf;
+use std::str::FromStr;
+use clap::{Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
 
-#[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExitCode {
-    Ok = 0,
-    GeneralError = 1,
-    BadArgs = 2,
-    WindowNotFound = 3,
-    WgcUnavailable = 4,
-    CaptureFailed = 5,
-    SaveFailed = 6,
-    #[allow(dead_code)]
-    Timeout = 7,
-    #[allow(dead_code)]
-    PermissionDenied = 8,
+/// Representation of a rectangular screen region (logical coordinates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Region {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
-#[derive(Parser, Debug, Clone)]
-#[command(name = "wgccli", about = "Windows Graphics Capture command-line tool", disable_help_flag = true)]
+impl FromStr for Region {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
+        if parts.len() != 4 {
+            return Err("Region must be formatted as 'x,y,w,h' (e.g. 100,200,800,600)".to_string());
+        }
+
+        let x = parts[0]
+            .parse::<i32>()
+            .map_err(|e| format!("Invalid x coordinate: {e}"))?;
+        let y = parts[1]
+            .parse::<i32>()
+            .map_err(|e| format!("Invalid y coordinate: {e}"))?;
+        let width = parts[2]
+            .parse::<u32>()
+            .map_err(|e| format!("Invalid width: {e}"))?;
+        let height = parts[3]
+            .parse::<u32>()
+            .map_err(|e| format!("Invalid height: {e}"))?;
+
+        if width == 0 || height == 0 {
+            return Err("Width and height of region must be greater than 0".to_string());
+        }
+
+        Ok(Region {
+            x,
+            y,
+            width,
+            height,
+        })
+    }
+}
+
+/// Supported output image formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default, Serialize, Deserialize)]
+pub enum ImageFormat {
+    #[default]
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl ImageFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Webp => "webp",
+        }
+    }
+}
+
+/// Cross-platform command-line screen capture utility.
+#[derive(Parser, Debug)]
+#[command(
+    name = "rgc-cli",
+    version,
+    about = "Cross-platform screen capture CLI utility written in Rust",
+    long_about = "Fast, lightweight, and cross-platform screen capture utility supporting multi-monitor selection, high-DPI scaling, clipboard export, and stdout streaming."
+)]
 pub struct Cli {
-    #[arg(long = "title")]
-    pub title: Option<String>,
+    /// List all available monitors and exit
+    #[arg(short = 'l', long = "list-monitors")]
+    pub list_monitors: bool,
 
-    #[arg(long = "exact", default_value_t = false)]
-    pub exact: bool,
+    /// Monitor index to capture (0-indexed). Defaults to primary monitor
+    #[arg(short = 'm', long = "monitor", value_name = "INDEX")]
+    pub monitor: Option<usize>,
 
-    #[arg(long = "hwnd", value_parser = parse_hwnd)]
-    pub hwnd: Option<u64>,
+    /// Region to capture in logical coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
+    #[arg(short = 'r', long = "region", value_name = "x,y,w,h")]
+    pub region: Option<Region>,
 
-    #[arg(long = "list", default_value_t = false)]
-    pub list: bool,
+    /// Output file path or directory, or '-' for stdout stream. Defaults to timestamped file in CWD
+    #[arg(short = 'o', long = "output", value_name = "PATH")]
+    pub output: Option<PathBuf>,
 
-    #[arg(long = "out")]
-    pub out: Option<String>,
+    /// Copy screenshot directly to system clipboard
+    #[arg(short = 'c', long = "clipboard")]
+    pub clipboard: bool,
 
-    #[arg(long = "json", default_value_t = false)]
+    /// Delay before capturing in milliseconds (e.g. 1000 for 1 second)
+    #[arg(short = 'd', long = "delay", value_name = "MS")]
+    pub delay: Option<u64>,
+
+    /// Output image format. If omitted, automatically inferred from file extension or defaults to PNG
+    #[arg(short = 'f', long = "format", value_enum)]
+    pub format: Option<ImageFormat>,
+
+    /// Output result as structured JSON (ideal for automation & AI agents)
+    #[arg(long = "json")]
     pub json: bool,
 
-    #[arg(long = "timeout-ms", default_value_t = 3000)]
-    pub timeout_ms: u32,
+    /// Enable verbose / debug logging
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
 
-    #[arg(long = "include-minimized", default_value_t = true)]
-    pub include_minimized: bool,
-
-    #[arg(long = "no-restore", default_value_t = false)]
-    pub no_restore: bool,
-
-    #[arg(long = "restore", default_value_t = true)]
-    pub restore: bool,
-
-    #[arg(long = "help", default_value_t = false)]
-    pub help: bool,
-
-    #[arg(long = "version", default_value_t = false)]
-    pub version: bool,
-
-    // New features from C++ v1.1
-    #[arg(long = "pid")]
-    pub pid: Option<u32>,
-
-    #[arg(long = "process")]
-    pub process: Option<String>,
-
-    #[arg(long = "class-name")]
-    pub class_name: Option<String>,
-
-    #[arg(long = "require-unique", default_value_t = false)]
-    pub require_unique: bool,
-
-    #[arg(long = "delay-ms", default_value_t = 0)]
-    pub delay_ms: u32,
-
-    #[arg(long = "server", default_value_t = false)]
-    pub server: bool,
-
-    #[arg(long = "client")]
-    pub client: Option<String>,
-
-    #[arg(long = "pipe", default_value = "wgccli")]
-    pub pipe: String,
-
-    #[arg(long = "doctor", default_value_t = false)]
-    pub doctor: bool,
+    /// Suppress non-error output
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
 }
 
-impl Cli {
-    pub fn has_target(&self) -> bool {
-        self.title.is_some() || self.hwnd.is_some() || self.pid.is_some()
-            || self.process.is_some() || self.class_name.is_some()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_region_valid() {
+        let region = "100,200,800,600".parse::<Region>().unwrap();
+        assert_eq!(
+            region,
+            Region {
+                x: 100,
+                y: 200,
+                width: 800,
+                height: 600
+            }
+        );
     }
 
-    pub fn has_filter(&self) -> bool {
-        self.pid.is_some() || self.process.is_some() || self.class_name.is_some()
+    #[test]
+    fn test_parse_region_with_spaces() {
+        let region = " 50 , -10 , 1920 , 1080 ".parse::<Region>().unwrap();
+        assert_eq!(
+            region,
+            Region {
+                x: 50,
+                y: -10,
+                width: 1920,
+                height: 1080
+            }
+        );
     }
-}
 
-fn parse_hwnd(s: &str) -> Result<u64, String> {
-    let s = s.trim();
-    let val = if s.len() > 2 && (s.starts_with("0x") || s.starts_with("0X")) {
-        u64::from_str_radix(&s[2..], 16)
-    } else {
-        s.parse::<u64>()
-    };
-    val.map_err(|e| format!("invalid HWND value: {s}: {e}")).and_then(|v| {
-        if v == 0 {
-            Err(format!("invalid HWND value: {s}"))
-        } else {
-            Ok(v)
-        }
-    })
-}
+    #[test]
+    fn test_parse_region_invalid_zero_dimension() {
+        assert!("100,200,0,600".parse::<Region>().is_err());
+        assert!("100,200,800,0".parse::<Region>().is_err());
+    }
 
-pub fn help_text() -> &'static str {
-    "\
-wgccli - Windows Graphics Capture command-line tool
+    #[test]
+    fn test_parse_region_invalid_format() {
+        assert!("100,200,800".parse::<Region>().is_err());
+        assert!("abc,200,800,600".parse::<Region>().is_err());
+    }
 
-Usage:
-  wgccli.exe --title <text> [--exact] --out <dir-or-file> [options]
-  wgccli.exe --hwnd <hex-or-decimal> --out <dir-or-file> [options]
-  wgccli.exe --pid <pid> --out <dir-or-file> [options]
-  wgccli.exe --list [--json]
-  wgccli.exe --server [--pipe <name>]
-  wgccli.exe --client <json> [--pipe <name>]
-  wgccli.exe --doctor
+    #[test]
+    fn test_cli_parsing_defaults() {
+        let cli = Cli::try_parse_from(["rgc-cli"]).unwrap();
+        assert_eq!(cli.monitor, None);
+        assert_eq!(cli.region, None);
+        assert_eq!(cli.output, None);
+        assert!(!cli.clipboard);
+        assert_eq!(cli.delay, None);
+        assert_eq!(cli.format, None);
+        assert!(!cli.json);
+        assert!(!cli.list_monitors);
+    }
 
-Required (one of):
-  --title <text>             Match window by title (partial, case-insensitive)
-  --hwnd <hex-or-decimal>    Capture by window handle
-  --pid <pid>                Capture by process ID
-  --list                     List candidate windows
-  --server                   Start named pipe server
-  --client <json>            Send request to server via pipe
-  --doctor                   Run diagnostics
+    #[test]
+    fn test_cli_parsing_options() {
+        let cli = Cli::try_parse_from([
+            "rgc-cli",
+            "--monitor", "1",
+            "--region", "10,20,300,400",
+            "--output", "screenshot.webp",
+            "-c",
+            "--delay", "500",
+            "--format", "webp",
+            "--json",
+            "-v",
+        ])
+        .unwrap();
 
-Options:
-  --exact                    Exact title match (case-insensitive)
-  --out <dir-or-file>        Output directory or full PNG file path
-  --json                     JSON output
-  --timeout-ms <number>      Wait for first frame timeout (default: 3000)
-  --delay-ms <number>        Delay before capture (default: 0)
-  --include-minimized        Include minimized windows in list (default: true)
-  --no-restore               Do not try to restore minimized window
-  --restore                  Try to restore window before capture (default: true)
-  --pid <pid>                Filter by process ID
-  --process <name>           Filter by process name
-  --class-name <name>        Filter by window class name
-  --require-unique           Fail if multiple windows match
-  --pipe <name>              Named pipe name (default: wgccli)
-  --help                     Print this help
-  --version                  Print version
-
-Examples:
-  wgccli.exe --title \"Notepad\" --out C:\\Temp
-  wgccli.exe --title \"Android Studio\" --exact --out C:\\Screenshots
-  wgccli.exe --hwnd 0x00123456 --out C:\\Screenshots --json
-  wgccli.exe --pid 1234 --out C:\\Temp
-  wgccli.exe --process notepad --out C:\\Temp
-  wgccli.exe --list
-  wgccli.exe --list --json
-  wgccli.exe --server
-  wgccli.exe --client \"{\\\"action\\\":\\\"list\\\"}\"
-  wgccli.exe --doctor"
+        assert_eq!(cli.monitor, Some(1));
+        assert_eq!(
+            cli.region,
+            Some(Region {
+                x: 10,
+                y: 20,
+                width: 300,
+                height: 400
+            })
+        );
+        assert_eq!(cli.output.unwrap(), PathBuf::from("screenshot.webp"));
+        assert!(cli.clipboard);
+        assert_eq!(cli.delay, Some(500));
+        assert_eq!(cli.format, Some(ImageFormat::Webp));
+        assert!(cli.json);
+        assert!(cli.verbose);
+    }
 }

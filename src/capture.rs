@@ -1,162 +1,266 @@
-use std::io::Write;
-use windows::Win32::Graphics::Direct3D11::ID3D11Device;
+use image::{DynamicImage, RgbaImage};
+use log::debug;
+use thiserror::Error;
+use xcap::Monitor;
 
-type BoxError = Box<dyn std::error::Error>;
+use crate::cli::Region;
 
-pub struct CapturedImage {
+#[derive(Error, Debug)]
+pub enum CaptureError {
+    #[error("No monitors found on system")]
+    NoMonitorsFound,
+
+    #[error("Monitor index {0} is out of bounds (found {1} monitors)")]
+    MonitorNotFound(usize, usize),
+
+    #[error("Failed to list monitors: {0}")]
+    ListMonitorsFailed(#[source] xcap::XCapError),
+
+    #[error("Failed to query monitor properties: {0}")]
+    MonitorPropertyFailed(#[source] xcap::XCapError),
+
+    #[error("Failed to capture monitor: {0}")]
+    CaptureFailed(#[source] xcap::XCapError),
+
+    #[error(
+        "Specified crop region (x={x}, y={y}, w={width}, h={height}) is out of monitor bounds ({monitor_w}x{monitor_h})"
+    )]
+    RegionOutOfBounds {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        monitor_w: u32,
+        monitor_h: u32,
+    },
+}
+
+/// Information about a connected display/monitor.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MonitorInfo {
+    pub index: usize,
+    pub name: String,
+    pub is_primary: bool,
     pub width: u32,
     pub height: u32,
-    pub stride: u32,
-    pub bgra: Vec<u8>,
+    pub scale_factor: f32,
 }
 
-#[repr(C)]
-struct WgcCaptureResult {
-    width: u32,
-    height: u32,
-    stride: u32,
-    data: *mut u8,
-    data_len: u32,
-    success: bool,
-    error_code: u32,
+/// Retrieve all connected monitors from the system.
+pub fn get_monitors() -> Result<Vec<Monitor>, CaptureError> {
+    Monitor::all().map_err(CaptureError::ListMonitorsFailed)
 }
 
-extern "C" {
-    fn wgc_capture_window(
-        device: *mut std::ffi::c_void,
-        hwnd: u64,
-        timeout_ms: u32,
-    ) -> WgcCaptureResult;
+/// Retrieve friendly display information for all connected monitors.
+pub fn get_monitor_infos() -> Result<Vec<MonitorInfo>, CaptureError> {
+    let monitors = get_monitors()?;
+    let mut infos = Vec::with_capacity(monitors.len());
 
-    fn wgc_free_capture(result: *mut WgcCaptureResult);
-}
+    for (index, monitor) in monitors.iter().enumerate() {
+        let name = monitor.name().unwrap_or_else(|_| format!("Monitor #{index}"));
+        let is_primary = monitor.is_primary().unwrap_or(false);
+        let width = monitor.width().map_err(CaptureError::MonitorPropertyFailed)?;
+        let height = monitor.height().map_err(CaptureError::MonitorPropertyFailed)?;
+        let scale_factor = monitor.scale_factor().unwrap_or(1.0);
 
-pub fn capture_window(
-    device: &ID3D11Device,
-    hwnd: i64,
-    timeout_ms: u32,
-) -> Result<Option<CapturedImage>, BoxError> {
-    unsafe {
-        let _ = windows::Win32::System::WinRT::RoInitialize(
-            windows::Win32::System::WinRT::RO_INIT_MULTITHREADED,
-        );
+        infos.push(MonitorInfo {
+            index,
+            name,
+            is_primary,
+            width,
+            height,
+            scale_factor,
+        });
     }
 
-    let device_raw = windows::core::Interface::as_raw(device) as *mut std::ffi::c_void;
-
-    let mut cpp_result = unsafe { wgc_capture_window(device_raw, hwnd as u64, timeout_ms) };
-
-    if !cpp_result.success {
-        return Err(format!("WGC capture failed with error code: {}", cpp_result.error_code).into());
-    }
-
-    let img = CapturedImage {
-        width: cpp_result.width,
-        height: cpp_result.height,
-        stride: cpp_result.stride,
-        bgra: unsafe {
-            std::slice::from_raw_parts(cpp_result.data, cpp_result.data_len as usize).to_vec()
-        },
-    };
-
-    unsafe { wgc_free_capture(&mut cpp_result) };
-
-    Ok(Some(img))
+    Ok(infos)
 }
 
-pub fn save_png(image: &CapturedImage, path: &str) -> Result<(), BoxError> {
-    let file = std::fs::File::create(path)?;
-    let mut writer = std::io::BufWriter::new(file);
-
-    let width = image.width;
-    let height = image.height;
-
-    writer.write_all(&[137, 80, 78, 71, 13, 10, 26, 10])?;
-
-    let ihdr_data = {
-        let mut d = Vec::with_capacity(13);
-        d.extend_from_slice(&width.to_be_bytes());
-        d.extend_from_slice(&height.to_be_bytes());
-        d.push(8);
-        d.push(6);
-        d.push(0);
-        d.push(0);
-        d.push(0);
-        d
-    };
-    write_chunk(&mut writer, b"IHDR", &ihdr_data)?;
-
-    let mut raw_data = Vec::with_capacity((width as usize * 4 + 1) * height as usize);
-    for y in 0..height as usize {
-        raw_data.push(0);
-        let row_start = y * image.stride as usize;
-        let row_end = row_start + width as usize * 4;
-        for x in (row_start..row_end).step_by(4) {
-            raw_data.push(image.bgra[x + 2]);
-            raw_data.push(image.bgra[x + 1]);
-            raw_data.push(image.bgra[x]);
-            raw_data.push(image.bgra[x + 3]);
+/// Find the primary monitor index, falling back to index 0 if not explicitly designated.
+pub fn find_primary_monitor_index(monitors: &[Monitor]) -> usize {
+    for (idx, m) in monitors.iter().enumerate() {
+        if m.is_primary().unwrap_or(false) {
+            return idx;
         }
     }
-
-    let compressed = deflate_compress(&raw_data)?;
-    write_chunk(&mut writer, b"IDAT", &compressed)?;
-
-    write_chunk(&mut writer, b"IEND", &[])?;
-
-    writer.flush()?;
-    Ok(())
+    0
 }
 
-fn write_chunk(writer: &mut impl std::io::Write, chunk_type: &[u8; 4], data: &[u8]) -> Result<(), BoxError> {
-    writer.write_all(&(data.len() as u32).to_be_bytes())?;
-    writer.write_all(chunk_type)?;
-    writer.write_all(data)?;
-
-    let mut crc = Crc32::new();
-    crc.update(chunk_type);
-    crc.update(data);
-    writer.write_all(&crc.finalize().to_be_bytes())?;
-    Ok(())
-}
-
-struct Crc32 {
-    value: u32,
-}
-
-impl Crc32 {
-    fn new() -> Self {
-        Self { value: 0xFFFFFFFF }
+/// Map user logical coordinates to physical pixels taking into account the monitor's DPI scale factor.
+pub fn logical_to_physical_region(
+    region: &Region,
+    scale_factor: f32,
+    monitor_width: u32,
+    monitor_height: u32,
+) -> Result<(u32, u32, u32, u32), CaptureError> {
+    if region.x < 0 || region.y < 0 {
+        return Err(CaptureError::RegionOutOfBounds {
+            x: region.x.max(0) as u32,
+            y: region.y.max(0) as u32,
+            width: region.width,
+            height: region.height,
+            monitor_w: monitor_width,
+            monitor_h: monitor_height,
+        });
     }
 
-    fn update(&mut self, data: &[u8]) {
-        for &byte in data {
-            self.value ^= byte as u32;
-            for _ in 0..8 {
-                if self.value & 1 != 0 {
-                    self.value = (self.value >> 1) ^ 0xEDB88320;
-                } else {
-                    self.value >>= 1;
-                }
+    // Scale logical coordinates by DPI scale factor
+    let phys_x = (region.x as f32 * scale_factor).round() as u32;
+    let phys_y = (region.y as f32 * scale_factor).round() as u32;
+    let phys_w = (region.width as f32 * scale_factor).round() as u32;
+    let phys_h = (region.height as f32 * scale_factor).round() as u32;
+
+    debug!(
+        "Translated region: logical({:?}) * scale({}) -> physical(x={}, y={}, w={}, h={})",
+        region, scale_factor, phys_x, phys_y, phys_w, phys_h
+    );
+
+    if phys_x + phys_w > monitor_width || phys_y + phys_h > monitor_height || phys_w == 0 || phys_h == 0 {
+        return Err(CaptureError::RegionOutOfBounds {
+            x: phys_x,
+            y: phys_y,
+            width: phys_w,
+            height: phys_h,
+            monitor_w: monitor_width,
+            monitor_h: monitor_height,
+        });
+    }
+
+    Ok((phys_x, phys_y, phys_w, phys_h))
+}
+
+/// Capture the primary monitor and return raw RGBA image data in memory.
+#[allow(dead_code)]
+pub fn capture_primary_monitor() -> Result<RgbaImage, CaptureError> {
+    let monitors = get_monitors()?;
+    if monitors.is_empty() {
+        return Err(CaptureError::NoMonitorsFound);
+    }
+
+    let primary_idx = find_primary_monitor_index(&monitors);
+    debug!("Capturing primary monitor at index {}", primary_idx);
+
+    monitors[primary_idx]
+        .capture_image()
+        .map_err(CaptureError::CaptureFailed)
+}
+
+/// Capture a screenshot from a specific monitor index (or primary by default),
+/// optionally cropping to a specified logical region.
+pub fn capture_screen(
+    monitor_index: Option<usize>,
+    region: Option<&Region>,
+) -> Result<DynamicImage, CaptureError> {
+    let monitors = get_monitors()?;
+    if monitors.is_empty() {
+        return Err(CaptureError::NoMonitorsFound);
+    }
+
+    let target_idx = match monitor_index {
+        Some(idx) => {
+            if idx >= monitors.len() {
+                return Err(CaptureError::MonitorNotFound(idx, monitors.len()));
             }
+            idx
+        }
+        None => find_primary_monitor_index(&monitors),
+    };
+
+    let target_monitor = &monitors[target_idx];
+    debug!(
+        "Selected monitor #{}: name={:?}, primary={:?}",
+        target_idx,
+        target_monitor.name(),
+        target_monitor.is_primary()
+    );
+
+    let raw_image = target_monitor
+        .capture_image()
+        .map_err(CaptureError::CaptureFailed)?;
+
+    if let Some(reg) = region {
+        let width = target_monitor
+            .width()
+            .map_err(CaptureError::MonitorPropertyFailed)?;
+        let height = target_monitor
+            .height()
+            .map_err(CaptureError::MonitorPropertyFailed)?;
+        let scale_factor = target_monitor.scale_factor().unwrap_or(1.0);
+
+        let (x, y, w, h) = logical_to_physical_region(reg, scale_factor, width, height)?;
+        debug!("Cropping image to physical region: x={}, y={}, w={}, h={}", x, y, w, h);
+
+        // Zero-cost sub-image cropping view converted to owned buffer
+        let cropped = image::imageops::crop_imm(&raw_image, x, y, w, h).to_image();
+        Ok(DynamicImage::ImageRgba8(cropped))
+    } else {
+        Ok(DynamicImage::ImageRgba8(raw_image))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_and_capture_primary() {
+        let monitors = get_monitors().expect("Should query monitors");
+        assert!(!monitors.is_empty());
+
+        let infos = get_monitor_infos().expect("Should query monitor info");
+        assert_eq!(infos.len(), monitors.len());
+
+        let primary_img = capture_primary_monitor().expect("Capture primary monitor should succeed");
+        assert!(primary_img.width() > 0);
+        assert!(primary_img.height() > 0);
+    }
+
+    #[test]
+    fn test_capture_screen_with_region() {
+        let region = Region {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+
+        let captured = capture_screen(Some(0), Some(&region)).expect("Capture with region should succeed");
+        assert!(captured.width() >= 100);
+        assert!(captured.height() >= 100);
+    }
+
+    #[test]
+    fn test_capture_screen_invalid_monitor_index() {
+        let err = capture_screen(Some(9999), None).unwrap_err();
+        match err {
+            CaptureError::MonitorNotFound(idx, _) => assert_eq!(idx, 9999),
+            _ => panic!("Expected MonitorNotFound error"),
         }
     }
 
-    fn finalize(self) -> u32 {
-        self.value ^ 0xFFFFFFFF
+    #[test]
+    fn test_logical_to_physical_region() {
+        let region = Region {
+            x: 100,
+            y: 100,
+            width: 200,
+            height: 200,
+        };
+
+        // Scale 1.5x on 1920x1080 display
+        let (x, y, w, h) = logical_to_physical_region(&region, 1.5, 1920, 1080).unwrap();
+        assert_eq!(x, 150);
+        assert_eq!(y, 150);
+        assert_eq!(w, 300);
+        assert_eq!(h, 300);
+
+        // Out of bounds test
+        let out_region = Region {
+            x: 1800,
+            y: 1000,
+            width: 500,
+            height: 500,
+        };
+        assert!(logical_to_physical_region(&out_region, 1.0, 1920, 1080).is_err());
     }
-}
-
-fn deflate_compress(data: &[u8]) -> Result<Vec<u8>, BoxError> {
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
-    encoder.write_all(data)?;
-    let compressed = encoder.finish()?;
-    Ok(compressed)
-}
-
-pub fn test_wgc() -> Result<(), BoxError> {
-    let d3d_res = super::d3d::create_d3d_device()?.ok_or("D3D11 device creation failed")?;
-    // Just test that we can create the device - actual capture requires a window
-    let _ = d3d_res;
-    Ok(())
 }
