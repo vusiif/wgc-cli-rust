@@ -475,8 +475,20 @@ pub fn run_mcp_loop(reader: impl BufRead, mut writer: impl Write) -> std::io::Re
         }
 
         if let Some(response_json) = handle_mcp_message(&line) {
-            writeln!(writer, "{response_json}")?;
-            writer.flush()?;
+            if let Err(e) = writeln!(writer, "{response_json}") {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    debug!("Downstream MCP client closed pipe (BrokenPipe)");
+                    break;
+                }
+                return Err(e);
+            }
+            if let Err(e) = writer.flush() {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    debug!("Downstream MCP client closed pipe during flush (BrokenPipe)");
+                    break;
+                }
+                return Err(e);
+            }
         }
     }
     info!("Exiting MCP stdio server loop");

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod capture;
 mod cli;
 mod doctor;
