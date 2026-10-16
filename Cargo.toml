@@ -7,7 +7,6 @@ description = "Cross-platform screen capture CLI utility written in Rust"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-anyhow = "1.0"
 thiserror = "2.0"
 chrono = "0.4"
 env_logger = "0.11"

@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use std::str::FromStr;
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::str::FromStr;
 
 /// Representation of a rectangular screen region (logical coordinates).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,12 +221,17 @@ mod tests {
     fn test_cli_parsing_options() {
         let cli = Cli::try_parse_from([
             "rgc-cli",
-            "--monitor", "1",
-            "--region", "10,20,300,400",
-            "--output", "screenshot.webp",
+            "--monitor",
+            "1",
+            "--region",
+            "10,20,300,400",
+            "--output",
+            "screenshot.webp",
             "-c",
-            "--delay", "500",
-            "--format", "webp",
+            "--delay",
+            "500",
+            "--format",
+            "webp",
             "--json",
             "-v",
         ])
@@ -263,13 +268,22 @@ mod tests {
         assert_eq!(cli_file.output_file, Some(PathBuf::from("dest.png")));
 
         // Conflict: --output and --output-file
-        assert!(Cli::try_parse_from(["rgc-cli", "-o", "out.png", "--output-file", "file.png"]).is_err());
+        assert!(
+            Cli::try_parse_from(["rgc-cli", "-o", "out.png", "--output-file", "file.png"]).is_err()
+        );
 
         // Conflict: --output and --output-dir
         assert!(Cli::try_parse_from(["rgc-cli", "-o", "out.png", "--output-dir", "dir"]).is_err());
 
         // Conflict: --output-file and --output-dir
-        assert!(Cli::try_parse_from(["rgc-cli", "--output-file", "out.png", "--output-dir", "dir"]).is_err());
+        assert!(Cli::try_parse_from([
+            "rgc-cli",
+            "--output-file",
+            "out.png",
+            "--output-dir",
+            "dir"
+        ])
+        .is_err());
     }
 
     #[test]

@@ -118,10 +118,16 @@ pub fn get_monitor_infos() -> Result<Vec<MonitorInfo>, CaptureError> {
     let mut infos = Vec::with_capacity(monitors.len());
 
     for (index, monitor) in monitors.iter().enumerate() {
-        let name = monitor.name().unwrap_or_else(|_| format!("Monitor #{index}"));
+        let name = monitor
+            .name()
+            .unwrap_or_else(|_| format!("Monitor #{index}"));
         let is_primary = monitor.is_primary().unwrap_or(false);
-        let width = monitor.width().map_err(CaptureError::MonitorPropertyFailed)?;
-        let height = monitor.height().map_err(CaptureError::MonitorPropertyFailed)?;
+        let width = monitor
+            .width()
+            .map_err(CaptureError::MonitorPropertyFailed)?;
+        let height = monitor
+            .height()
+            .map_err(CaptureError::MonitorPropertyFailed)?;
         let scale_factor = monitor.scale_factor().unwrap_or(1.0);
 
         infos.push(MonitorInfo {
@@ -168,7 +174,12 @@ pub fn resolve_crop_region(
     }
 
     let (phys_x, phys_y, phys_w, phys_h) = match coords {
-        CoordMode::Physical => (region.x as u32, region.y as u32, region.width, region.height),
+        CoordMode::Physical => (
+            region.x as u32,
+            region.y as u32,
+            region.width,
+            region.height,
+        ),
         CoordMode::Logical => {
             if !scale_factor.is_finite() || scale_factor <= 0.0 {
                 return Err(CaptureError::InvalidScaleFactor(scale_factor));
@@ -329,7 +340,10 @@ pub fn capture_screen(
             });
         }
 
-        debug!("Cropping image to physical region: x={}, y={}, w={}, h={}", x, y, w, h);
+        debug!(
+            "Cropping image to physical region: x={}, y={}, w={}, h={}",
+            x, y, w, h
+        );
         let cropped = image::imageops::crop_imm(&raw_image, x, y, w, h).to_image();
         Ok(DynamicImage::ImageRgba8(cropped))
     } else {
@@ -350,7 +364,8 @@ mod tests {
         let infos = get_monitor_infos().expect("Should query monitor info");
         assert_eq!(infos.len(), monitors.len());
 
-        let primary_img = capture_primary_monitor().expect("Capture primary monitor should succeed");
+        let primary_img =
+            capture_primary_monitor().expect("Capture primary monitor should succeed");
         assert!(primary_img.width() > 0);
         assert!(primary_img.height() > 0);
     }

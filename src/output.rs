@@ -1,11 +1,11 @@
-use std::fs;
-use std::io::stdout;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use chrono::Local;
 use image::DynamicImage;
 use log::debug;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::stdout;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use thiserror::Error;
 
 use crate::cli::ImageFormat;
@@ -336,8 +336,8 @@ pub fn copy_to_clipboard(image: &DynamicImage) -> Result<(), OutputError> {
     let height = rgba.height() as usize;
     let raw_bytes = rgba.into_raw();
 
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|e| OutputError::ClipboardFailed(e.to_string()))?;
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| OutputError::ClipboardFailed(e.to_string()))?;
 
     let img_data = arboard::ImageData {
         width,
@@ -365,7 +365,8 @@ pub fn write_to_stdout(image: &DynamicImage, format: ImageFormat) -> Result<(), 
         ImageFormat::Webp => image::ImageFormat::WebP,
     };
 
-    let mut buffer = Cursor::new(Vec::new());
+    let initial_capacity = (image.width() as usize * image.height() as usize).min(1024 * 1024);
+    let mut buffer = Cursor::new(Vec::with_capacity(initial_capacity));
     image
         .write_to(&mut buffer, image_format)
         .map_err(OutputError::StdoutFailed)?;
@@ -477,10 +478,12 @@ pub fn save_image(
         ImageFormat::Webp => image::ImageFormat::WebP,
     };
 
-    image.save_with_format(&file_path, image_format).map_err(|e| OutputError::SaveFailed {
-        path: file_path.clone(),
-        source: e,
-    })?;
+    image
+        .save_with_format(&file_path, image_format)
+        .map_err(|e| OutputError::SaveFailed {
+            path: file_path.clone(),
+            source: e,
+        })?;
 
     Ok(file_path)
 }
@@ -513,14 +516,20 @@ mod tests {
             ImageFormat::Png
         );
         assert_eq!(infer_format(None, None), ImageFormat::Png);
-        assert_eq!(infer_format(Some(Path::new("unknown.xyz")), None), ImageFormat::Png);
+        assert_eq!(
+            infer_format(Some(Path::new("unknown.xyz")), None),
+            ImageFormat::Png
+        );
     }
 
     #[test]
     fn test_generate_default_filename_uniqueness() {
         let name1 = generate_default_filename(ImageFormat::Png);
         let name2 = generate_default_filename(ImageFormat::Png);
-        assert_ne!(name1, name2, "Consecutive generated filenames must be unique");
+        assert_ne!(
+            name1, name2,
+            "Consecutive generated filenames must be unique"
+        );
         assert!(name1.starts_with("screenshot_"));
         assert!(name1.ends_with(".png"));
     }
@@ -567,7 +576,9 @@ mod tests {
         let dest = OutputDestination::File(PathBuf::from("shot.jpg"));
         let err = validate_and_infer_format(&dest, Some(ImageFormat::Png)).unwrap_err();
         match err {
-            OutputError::FormatMismatch { explicit, inferred, .. } => {
+            OutputError::FormatMismatch {
+                explicit, inferred, ..
+            } => {
                 assert_eq!(explicit, ImageFormat::Png);
                 assert_eq!(inferred, ImageFormat::Jpeg);
             }
@@ -591,7 +602,10 @@ mod tests {
 
         let custom = OutputDestination::File(PathBuf::from("target/test_output_dir/my_pic.webp"));
         let resolved = resolve_output_path(&custom, ImageFormat::Webp).unwrap();
-        assert_eq!(resolved, PathBuf::from("target/test_output_dir/my_pic.webp"));
+        assert_eq!(
+            resolved,
+            PathBuf::from("target/test_output_dir/my_pic.webp")
+        );
         assert!(Path::new("target/test_output_dir").exists());
 
         // Clean up test dir
@@ -609,7 +623,8 @@ mod tests {
         assert_eq!(saved_png, PathBuf::from("target/test_scratch/test.png"));
         assert!(saved_png.exists());
 
-        let test_file_webp = OutputDestination::File(PathBuf::from("target/test_scratch/test.webp"));
+        let test_file_webp =
+            OutputDestination::File(PathBuf::from("target/test_scratch/test.webp"));
         let saved_webp = save_image(&dynamic, &test_file_webp, ImageFormat::Webp).unwrap();
         assert_eq!(saved_webp, PathBuf::from("target/test_scratch/test.webp"));
         assert!(saved_webp.exists());
@@ -626,6 +641,10 @@ mod tests {
         let dynamic = DynamicImage::ImageRgba8(img);
 
         let result = copy_to_clipboard(&dynamic);
-        assert!(result.is_ok(), "Clipboard copy should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Clipboard copy should succeed: {:?}",
+            result.err()
+        );
     }
 }

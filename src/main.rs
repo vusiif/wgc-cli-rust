@@ -4,14 +4,14 @@ mod doctor;
 mod mcp;
 mod output;
 
-use std::fs;
-use std::process::ExitCode;
-use std::thread::sleep;
-use std::time::Duration;
 use clap::Parser;
 use cli::Cli;
 use log::debug;
 use output::{ApiError, ApiResponse, CaptureResultJson, ErrorCode, OutputDestination};
+use std::fs;
+use std::process::ExitCode;
+use std::thread::sleep;
+use std::time::Duration;
 
 fn main() -> ExitCode {
     let args = Cli::parse();
@@ -41,7 +41,9 @@ fn main() -> ExitCode {
                 if let Ok(json_str) = serde_json::to_string_pretty(&response) {
                     println!("{}", json_str);
                 } else {
-                    println!(r#"{{"ok":false,"error":{{"errorCode":"UNKNOWN","message":"Failed to serialize error payload","exitCode":127}}}}"#);
+                    println!(
+                        r#"{{"ok":false,"error":{{"errorCode":"UNKNOWN","message":"Failed to serialize error payload","exitCode":127}}}}"#
+                    );
                 }
             } else {
                 eprintln!("Error: {}", err.message);
@@ -57,9 +59,8 @@ fn main() -> ExitCode {
 fn run(args: Cli) -> Result<(), ApiError> {
     // 0. Handle MCP stdio server mode
     if args.mcp {
-        mcp::run_mcp_server().map_err(|e| {
-            ApiError::new(ErrorCode::IoError, format!("MCP server error: {e}"))
-        })?;
+        mcp::run_mcp_server()
+            .map_err(|e| ApiError::new(ErrorCode::IoError, format!("MCP server error: {e}")))?;
         return Ok(());
     }
 
@@ -69,7 +70,10 @@ fn run(args: Cli) -> Result<(), ApiError> {
         if args.json {
             let response = ApiResponse::success(report);
             let json_str = serde_json::to_string_pretty(&response).map_err(|e| {
-                ApiError::new(ErrorCode::EncodeFailed, format!("JSON serialization failed: {e}"))
+                ApiError::new(
+                    ErrorCode::EncodeFailed,
+                    format!("JSON serialization failed: {e}"),
+                )
             })?;
             println!("{}", json_str);
             return Ok(());
@@ -91,7 +95,10 @@ fn run(args: Cli) -> Result<(), ApiError> {
                 "Unavailable"
             }
         );
-        println!("Supported Formats:   {}", report.supported_formats.join(", "));
+        println!(
+            "Supported Formats:   {}",
+            report.supported_formats.join(", ")
+        );
         println!("Subsystem Status:    {}", report.status);
         println!("{:-<65}", "");
         return Ok(());
@@ -114,7 +121,9 @@ fn run(args: Cli) -> Result<(), ApiError> {
              Binary image stream and structured JSON text cannot both occupy stdout.",
         )
         .with_stage("argument_validation")
-        .with_suggestion("To retrieve structured JSON metadata, save to a file or directory instead of stdout."));
+        .with_suggestion(
+            "To retrieve structured JSON metadata, save to a file or directory instead of stdout.",
+        ));
     }
 
     // Infer image format and validate against file extension if explicit format provided
@@ -127,7 +136,10 @@ fn run(args: Cli) -> Result<(), ApiError> {
         if args.json {
             let response = ApiResponse::success(monitors);
             let json_str = serde_json::to_string_pretty(&response).map_err(|e| {
-                ApiError::new(ErrorCode::EncodeFailed, format!("JSON serialization failed: {e}"))
+                ApiError::new(
+                    ErrorCode::EncodeFailed,
+                    format!("JSON serialization failed: {e}"),
+                )
             })?;
             println!("{}", json_str);
             return Ok(());
@@ -218,7 +230,10 @@ fn run(args: Cli) -> Result<(), ApiError> {
         };
         let response = ApiResponse::success(result_payload);
         let json_str = serde_json::to_string_pretty(&response).map_err(|e| {
-            ApiError::new(ErrorCode::EncodeFailed, format!("JSON serialization failed: {e}"))
+            ApiError::new(
+                ErrorCode::EncodeFailed,
+                format!("JSON serialization failed: {e}"),
+            )
         })?;
         println!("{}", json_str);
     }

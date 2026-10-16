@@ -149,7 +149,10 @@ pub fn handle_mcp_message(line: &str) -> Option<String> {
             id,
             error: JsonRpcError {
                 code: -32600,
-                message: format!("Invalid Request: jsonrpc must be '2.0', got '{}'", req.jsonrpc),
+                message: format!(
+                    "Invalid Request: jsonrpc must be '2.0', got '{}'",
+                    req.jsonrpc
+                ),
                 data: None,
             },
         };
@@ -248,8 +251,16 @@ pub fn handle_mcp_message(line: &str) -> Option<String> {
             serde_json::to_string(&res).ok()
         }
         "tools/call" => {
-            let tool_name = req.params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let arguments = req.params.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+            let tool_name = req
+                .params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let arguments = req
+                .params
+                .get("arguments")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
             let call_result = execute_tool_call(tool_name, &arguments);
 
             let res = JsonRpcResponse {
@@ -397,7 +408,8 @@ fn execute_capture_tool(arguments: &serde_json::Value) -> ToolCallResult {
     }
 
     if return_base64 {
-        let mut buffer = Vec::new();
+        let initial_capacity = (image.width() as usize * image.height() as usize).min(1024 * 1024);
+        let mut buffer = Vec::with_capacity(initial_capacity);
         let img_fmt = match format {
             ImageFormat::Png => image::ImageFormat::Png,
             ImageFormat::Jpeg => image::ImageFormat::Jpeg,
@@ -523,7 +535,11 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"doctor","arguments":{}}}"#;
         let resp = handle_mcp_message(req).expect("response expected");
         assert!(resp.contains(r#""isError":false"#));
-        assert!(resp.contains("Operating System") || resp.contains("supportedFormats") || resp.contains("backend"));
+        assert!(
+            resp.contains("Operating System")
+                || resp.contains("supportedFormats")
+                || resp.contains("backend")
+        );
     }
 
     #[test]
