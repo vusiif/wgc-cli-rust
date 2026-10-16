@@ -44,6 +44,8 @@ Options:
   -m, --monitor <INDEX>       Monitor index to capture (0-indexed). Defaults to primary monitor
   -r, --region <x,y,w,h>      Region to capture in logical coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
   -o, --output <PATH>         Output file path, directory, or '-' for stdout stream. Defaults to timestamped file in CWD
+      --output-file <FILE>    Explicit output file destination (creates parent directories if missing)
+      --output-dir <DIR>      Explicit output directory destination (timestamped filename generated inside)
   -c, --clipboard             Copy screenshot directly to system clipboard
   -d, --delay <MS>            Delay before capturing in milliseconds (e.g. 1000 for 1 second)
   -f, --format <FORMAT>       Output image format. If omitted, inferred from file extension [possible values: png, jpeg, webp]
@@ -77,40 +79,85 @@ rgc-cli -o shot.webp --json
 Output:
 ```json
 {
-  "status": "success",
-  "path": "shot.webp",
-  "width": 2560,
-  "height": 1440,
-  "format": "Webp",
-  "clipboard": false,
-  "size_bytes": 417652
+  "ok": true,
+  "data": {
+    "status": "success",
+    "path": "shot.webp",
+    "width": 2560,
+    "height": 1440,
+    "format": "Webp",
+    "clipboard": false,
+    "sizeBytes": 417652
+  }
 }
 ```
 
-#### 4. Query monitors in JSON format
+#### 4. Save into a directory with auto-generated collision-free timestamp
+```bash
+rgc-cli --output-dir ./screenshots --json
+```
+Output:
+```json
+{
+  "ok": true,
+  "data": {
+    "status": "success",
+    "path": "screenshots/screenshot_2026-10-16_00-00-19.163_0000.png",
+    "width": 2560,
+    "height": 1440,
+    "format": "Png",
+    "clipboard": false,
+    "sizeBytes": 574834
+  }
+}
+```
+
+#### 5. Query monitors in JSON format
 ```bash
 rgc-cli --list-monitors --json
 ```
 Output:
 ```json
-[
-  {
-    "index": 0,
-    "name": "\\\\.\\DISPLAY1",
-    "is_primary": true,
-    "width": 2560,
-    "height": 1440,
-    "scale_factor": 1.5
-  }
-]
+{
+  "ok": true,
+  "data": [
+    {
+      "index": 0,
+      "name": "\\\\.\\DISPLAY1",
+      "is_primary": true,
+      "width": 2560,
+      "height": 1440,
+      "scale_factor": 1.5
+    }
+  ]
+}
 ```
 
-#### 5. Dual output: Copy to clipboard AND save to file
+#### 6. Structured Error Response Example
+When an error occurs in `--json` mode, machine-readable diagnostic details are returned to stdout with an appropriate exit code:
+```bash
+rgc-cli -m 999 --json
+```
+Output (Exit Code 3):
+```json
+{
+  "ok": false,
+  "error": {
+    "errorCode": "MONITOR_NOT_FOUND",
+    "message": "Monitor index 999 is out of bounds (found 1 monitors).",
+    "stage": "monitor_selection",
+    "suggestion": "Run 'rgc-cli --list-monitors' to see all valid monitor indices.",
+    "exitCode": 3
+  }
+}
+```
+
+#### 7. Dual output: Copy to clipboard AND save to file
 ```bash
 rgc-cli -c -o ./archive/
 ```
 
-#### 6. Delayed regional capture (HiDPI / Retina aware)
+#### 8. Delayed regional capture (HiDPI / Retina aware)
 ```bash
 rgc-cli -d 1500 -r 200,200,600,400 -o cropped.png
 ```
@@ -119,17 +166,23 @@ rgc-cli -d 1500 -r 200,200,600,400 -o cropped.png
 
 ## 🏛 Architecture
 
-- [`src/main.rs`](src/main.rs): Clean CLI entry point, logger initialization, and top-level pipeline orchestration.
+- [`src/main.rs`](src/main.rs): Clean CLI entry point, centralized error handling, and top-level pipeline orchestration.
 - [`src/cli.rs`](src/cli.rs): Type-safe command-line parsing powered by `clap` derive, including custom `Region` parser with boundary checks and serde derivations.
-- [`src/capture.rs`](src/capture.rs): Core capture abstraction, DPI logical-to-physical coordinate mapping, multi-monitor querying, and zero-allocation cropping.
-- [`src/output.rs`](src/output.rs): Clipboard export via `arboard`, stdout streaming, WebP/JPEG/PNG format inference, and idempotent filesystem operations.
+- [`src/capture.rs`](src/capture.rs): Core capture abstraction, DPI logical-to-physical coordinate mapping, multi-monitor querying, and bounds checking.
+- [`src/output.rs`](src/output.rs): Clipboard export via `arboard`, stdout streaming, collision-resistant timestamping, format validation, and unified JSON envelope schema.
 
 ---
 
 ## 🧪 Testing
 
-Run all unit and integration tests:
+Run all unit tests in headless environments (no physical display or clipboard needed):
 
 ```bash
 cargo test
+```
+
+Run hardware-dependent tests (requires active graphical desktop session and clipboard access):
+
+```bash
+cargo test -- --ignored
 ```

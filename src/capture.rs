@@ -22,6 +22,9 @@ pub enum CaptureError {
     #[error("Failed to capture monitor: {0}")]
     CaptureFailed(#[source] xcap::XCapError),
 
+    #[error("Invalid scale factor {0}: scale factor must be a finite, positive number")]
+    InvalidScaleFactor(f32),
+
     #[error(
         "Specified crop region (x={x}, y={y}, w={width}, h={height}) is out of monitor bounds ({monitor_w}x{monitor_h})"
     )]
@@ -33,6 +36,64 @@ pub enum CaptureError {
         monitor_w: u32,
         monitor_h: u32,
     },
+}
+
+impl From<CaptureError> for crate::output::ApiError {
+    fn from(err: CaptureError) -> Self {
+        use crate::output::{ApiError, ErrorCode};
+        match err {
+            CaptureError::NoMonitorsFound => {
+                ApiError::new(ErrorCode::NoMonitor, "No monitors found on system.")
+                    .with_stage("monitor_selection")
+                    .with_suggestion("Ensure at least one active display is connected and powered on.")
+            }
+            CaptureError::MonitorNotFound(req, avail) => ApiError::new(
+                ErrorCode::MonitorNotFound,
+                format!("Monitor index {req} is out of bounds (found {avail} monitors)."),
+            )
+            .with_stage("monitor_selection")
+            .with_suggestion("Run 'rgc-cli --list-monitors' to see all valid monitor indices."),
+            CaptureError::ListMonitorsFailed(e) => ApiError::new(
+                ErrorCode::CaptureFailed,
+                format!("Failed to list monitors: {e}"),
+            )
+            .with_stage("monitor_enumeration")
+            .with_suggestion("Verify display server permissions or graphics drivers."),
+            CaptureError::MonitorPropertyFailed(e) => ApiError::new(
+                ErrorCode::CaptureFailed,
+                format!("Failed to query monitor properties: {e}"),
+            )
+            .with_stage("monitor_properties")
+            .with_suggestion("Verify display driver stability."),
+            CaptureError::CaptureFailed(e) => ApiError::new(
+                ErrorCode::CaptureFailed,
+                format!("Failed to capture monitor: {e}"),
+            )
+            .with_stage("screen_capture")
+            .with_suggestion("Check display capture permissions in OS privacy settings."),
+            CaptureError::InvalidScaleFactor(factor) => ApiError::new(
+                ErrorCode::CaptureFailed,
+                format!("Invalid scale factor {factor}: must be a finite, positive number."),
+            )
+            .with_stage("dpi_scaling")
+            .with_suggestion("Check OS display scaling settings."),
+            CaptureError::RegionOutOfBounds {
+                x,
+                y,
+                width,
+                height,
+                monitor_w,
+                monitor_h,
+            } => ApiError::new(
+                ErrorCode::RegionOutOfBounds,
+                format!(
+                    "Specified crop region (x={x}, y={y}, w={width}, h={height}) is out of monitor bounds ({monitor_w}x{monitor_h})."
+                ),
+            )
+            .with_stage("region_validation")
+            .with_suggestion("Adjust region coordinates to fit within the selected monitor boundaries."),
+        }
+    }
 }
 
 /// Information about a connected display/monitor.
@@ -87,12 +148,17 @@ pub fn find_primary_monitor_index(monitors: &[Monitor]) -> usize {
 }
 
 /// Map user logical coordinates to physical pixels taking into account the monitor's DPI scale factor.
+/// Employs overflow-safe arithmetic and validates scaling factors and bounds.
 pub fn logical_to_physical_region(
     region: &Region,
     scale_factor: f32,
     monitor_width: u32,
     monitor_height: u32,
 ) -> Result<(u32, u32, u32, u32), CaptureError> {
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return Err(CaptureError::InvalidScaleFactor(scale_factor));
+    }
+
     if region.x < 0 || region.y < 0 {
         return Err(CaptureError::RegionOutOfBounds {
             x: region.x.max(0) as u32,
@@ -104,18 +170,53 @@ pub fn logical_to_physical_region(
         });
     }
 
-    // Scale logical coordinates by DPI scale factor
-    let phys_x = (region.x as f32 * scale_factor).round() as u32;
-    let phys_y = (region.y as f32 * scale_factor).round() as u32;
-    let phys_w = (region.width as f32 * scale_factor).round() as u32;
-    let phys_h = (region.height as f32 * scale_factor).round() as u32;
+    let scale = scale_factor as f64;
+    let phys_x_f = (region.x as f64 * scale).round();
+    let phys_y_f = (region.y as f64 * scale).round();
+    let phys_w_f = (region.width as f64 * scale).round();
+    let phys_h_f = (region.height as f64 * scale).round();
+
+    if phys_x_f < 0.0
+        || phys_y_f < 0.0
+        || phys_w_f <= 0.0
+        || phys_h_f <= 0.0
+        || phys_x_f > u32::MAX as f64
+        || phys_y_f > u32::MAX as f64
+        || phys_w_f > u32::MAX as f64
+        || phys_h_f > u32::MAX as f64
+    {
+        return Err(CaptureError::RegionOutOfBounds {
+            x: phys_x_f.clamp(0.0, u32::MAX as f64) as u32,
+            y: phys_y_f.clamp(0.0, u32::MAX as f64) as u32,
+            width: phys_w_f.clamp(0.0, u32::MAX as f64) as u32,
+            height: phys_h_f.clamp(0.0, u32::MAX as f64) as u32,
+            monitor_w: monitor_width,
+            monitor_h: monitor_height,
+        });
+    }
+
+    let phys_x = phys_x_f as u32;
+    let phys_y = phys_y_f as u32;
+    let phys_w = phys_w_f as u32;
+    let phys_h = phys_h_f as u32;
 
     debug!(
         "Translated region: logical({:?}) * scale({}) -> physical(x={}, y={}, w={}, h={})",
         region, scale_factor, phys_x, phys_y, phys_w, phys_h
     );
 
-    if phys_x + phys_w > monitor_width || phys_y + phys_h > monitor_height || phys_w == 0 || phys_h == 0 {
+    // Overflow-safe bounds check:
+    // 1. Starting coordinate must be within monitor dimensions.
+    // 2. Width/Height must not exceed the remaining room from the start coordinate.
+    // 3. Width/Height must be greater than zero.
+    let is_valid = phys_x < monitor_width
+        && phys_y < monitor_height
+        && phys_w <= monitor_width - phys_x
+        && phys_h <= monitor_height - phys_y
+        && phys_w > 0
+        && phys_h > 0;
+
+    if !is_valid {
         return Err(CaptureError::RegionOutOfBounds {
             x: phys_x,
             y: phys_y,
@@ -203,6 +304,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires graphical desktop session / physical monitor"]
     fn test_list_and_capture_primary() {
         let monitors = get_monitors().expect("Should query monitors");
         assert!(!monitors.is_empty());
@@ -216,6 +318,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires graphical desktop session / physical monitor"]
     fn test_capture_screen_with_region() {
         let region = Region {
             x: 0,
@@ -254,13 +357,47 @@ mod tests {
         assert_eq!(w, 300);
         assert_eq!(h, 300);
 
-        // Out of bounds test
-        let out_region = Region {
-            x: 1800,
-            y: 1000,
-            width: 500,
-            height: 500,
+        // Edge-aligned boundary: exactly fits monitor (100 + 1820 = 1920, 100 + 980 = 1080)
+        let edge_region = Region {
+            x: 100,
+            y: 100,
+            width: 1820,
+            height: 980,
         };
-        assert!(logical_to_physical_region(&out_region, 1.0, 1920, 1080).is_err());
+        let (ex, ey, ew, eh) = logical_to_physical_region(&edge_region, 1.0, 1920, 1080).unwrap();
+        assert_eq!((ex, ey, ew, eh), (100, 100, 1820, 980));
+
+        // 1 pixel out of bounds
+        let out_by_one = Region {
+            x: 100,
+            y: 100,
+            width: 1821,
+            height: 980,
+        };
+        assert!(logical_to_physical_region(&out_by_one, 1.0, 1920, 1080).is_err());
+
+        // Arithmetic overflow safety with u32::MAX width
+        let overflow_region = Region {
+            x: 10,
+            y: 10,
+            width: u32::MAX,
+            height: 100,
+        };
+        assert!(logical_to_physical_region(&overflow_region, 1.0, 1920, 1080).is_err());
+
+        // Negative coordinates
+        let neg_region = Region {
+            x: -1,
+            y: 10,
+            width: 100,
+            height: 100,
+        };
+        assert!(logical_to_physical_region(&neg_region, 1.0, 1920, 1080).is_err());
+
+        // Invalid scale factors (zero, negative, NaN, infinite)
+        assert!(logical_to_physical_region(&region, 0.0, 1920, 1080).is_err());
+        assert!(logical_to_physical_region(&region, -1.0, 1920, 1080).is_err());
+        assert!(logical_to_physical_region(&region, f32::NAN, 1920, 1080).is_err());
+        assert!(logical_to_physical_region(&region, f32::INFINITY, 1920, 1080).is_err());
     }
 }

@@ -3,14 +3,15 @@ mod cli;
 mod output;
 
 use std::fs;
+use std::process::ExitCode;
 use std::thread::sleep;
 use std::time::Duration;
 use clap::Parser;
 use cli::Cli;
 use log::debug;
-use output::CaptureResultJson;
+use output::{ApiError, ApiResponse, CaptureResultJson, ErrorCode, OutputDestination};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> ExitCode {
     let args = Cli::parse();
 
     let log_level = if args.verbose {
@@ -27,16 +28,64 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     debug!("Parsed CLI arguments: {:?}", args);
-    run(args)
+
+    let is_json = args.json;
+    match run(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let exit_code = err.exit_code;
+            if is_json {
+                let response = ApiResponse::<()>::failure(err);
+                if let Ok(json_str) = serde_json::to_string_pretty(&response) {
+                    println!("{}", json_str);
+                } else {
+                    println!(r#"{{"ok":false,"error":{{"errorCode":"UNKNOWN","message":"Failed to serialize error payload","exitCode":127}}}}"#);
+                }
+            } else {
+                eprintln!("Error: {}", err.message);
+                if let Some(sug) = err.suggestion {
+                    eprintln!("Suggestion: {}", sug);
+                }
+            }
+            ExitCode::from(exit_code as u8)
+        }
+    }
 }
 
-fn run(args: Cli) -> anyhow::Result<()> {
-    // 1. Handle monitor listing if requested
+fn run(args: Cli) -> Result<(), ApiError> {
+    // 1. Determine output destination and validate arguments early
+    let destination = output::determine_output_destination(
+        args.output.as_deref(),
+        args.output_file.as_deref(),
+        args.output_dir.as_deref(),
+    )?;
+
+    let is_stdout = destination == OutputDestination::Stdout;
+
+    // R-01: Prohibit combining --json with -o - (stdout) to prevent stream corruption
+    if is_stdout && args.json {
+        return Err(ApiError::new(
+            ErrorCode::BadArgs,
+            "Cannot combine '--json' with standard output streaming ('-o -'). \
+             Binary image stream and structured JSON text cannot both occupy stdout.",
+        )
+        .with_stage("argument_validation")
+        .with_suggestion("To retrieve structured JSON metadata, save to a file or directory instead of stdout."));
+    }
+
+    // Infer image format and validate against file extension if explicit format provided
+    let format = output::validate_and_infer_format(&destination, args.format)?;
+
+    // 2. Handle monitor listing if requested
     if args.list_monitors {
         let monitors = capture::get_monitor_infos()?;
 
         if args.json {
-            println!("{}", serde_json::to_string_pretty(&monitors)?);
+            let response = ApiResponse::success(monitors);
+            let json_str = serde_json::to_string_pretty(&response).map_err(|e| {
+                ApiError::new(ErrorCode::EncodeFailed, format!("JSON serialization failed: {e}"))
+            })?;
+            println!("{}", json_str);
             return Ok(());
         }
 
@@ -57,13 +106,7 @@ fn run(args: Cli) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Determine if output is destined for stdout piping (`-o -`)
-    let is_stdout = args.output.as_deref().is_some_and(|p| p.to_str() == Some("-"));
-
-    // Infer image format from explicit flag or destination file extension
-    let format = output::infer_format(args.output.as_deref(), args.format);
-
-    // 2. Handle delayed capture if requested
+    // 3. Handle delayed capture if requested
     if let Some(delay_ms) = args.delay {
         if delay_ms > 0 {
             if !args.quiet && !args.json {
@@ -77,7 +120,7 @@ fn run(args: Cli) -> anyhow::Result<()> {
         }
     }
 
-    // 3. Perform capture with monitor selection & optional region cropping
+    // 4. Perform capture with monitor selection & optional region cropping
     debug!(
         "Initiating capture (monitor={:?}, region={:?})",
         args.monitor, args.region
@@ -86,7 +129,7 @@ fn run(args: Cli) -> anyhow::Result<()> {
     let img_width = dynamic_image.width();
     let img_height = dynamic_image.height();
 
-    // 4. Handle clipboard export if requested
+    // 5. Handle clipboard export if requested
     if args.clipboard {
         output::copy_to_clipboard(&dynamic_image)?;
         if !args.quiet && !args.json {
@@ -98,18 +141,14 @@ fn run(args: Cli) -> anyhow::Result<()> {
         }
     }
 
-    // 5. Output handling:
+    // 6. Output handling:
     let mut saved_path_buf = None;
     let mut file_size_bytes = None;
 
     if is_stdout {
         output::write_to_stdout(&dynamic_image, format)?;
-    } else if args.output.is_some() || !args.clipboard {
-        let saved_path = output::save_image(
-            &dynamic_image,
-            args.output.as_deref(),
-            format,
-        )?;
+    } else if destination != OutputDestination::Auto || !args.clipboard {
+        let saved_path = output::save_image(&dynamic_image, &destination, format)?;
 
         if let Ok(meta) = fs::metadata(&saved_path) {
             file_size_bytes = Some(meta.len());
@@ -122,9 +161,9 @@ fn run(args: Cli) -> anyhow::Result<()> {
         saved_path_buf = Some(saved_path);
     }
 
-    // 6. Handle JSON output mode
+    // 7. Handle JSON output mode
     if args.json {
-        let json_output = CaptureResultJson {
+        let result_payload = CaptureResultJson {
             status: "success".to_string(),
             path: saved_path_buf.map(|p| p.display().to_string()),
             width: img_width,
@@ -133,7 +172,11 @@ fn run(args: Cli) -> anyhow::Result<()> {
             clipboard: args.clipboard,
             size_bytes: file_size_bytes,
         };
-        println!("{}", serde_json::to_string_pretty(&json_output)?);
+        let response = ApiResponse::success(result_payload);
+        let json_str = serde_json::to_string_pretty(&response).map_err(|e| {
+            ApiError::new(ErrorCode::EncodeFailed, format!("JSON serialization failed: {e}"))
+        })?;
+        println!("{}", json_str);
     }
 
     Ok(())

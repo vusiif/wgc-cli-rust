@@ -88,8 +88,29 @@ pub struct Cli {
     pub region: Option<Region>,
 
     /// Output file path or directory, or '-' for stdout stream. Defaults to timestamped file in CWD
-    #[arg(short = 'o', long = "output", value_name = "PATH")]
+    #[arg(
+        short = 'o',
+        long = "output",
+        value_name = "PATH",
+        conflicts_with_all = ["output_file", "output_dir"]
+    )]
     pub output: Option<PathBuf>,
+
+    /// Explicit output file destination (creates parent directories if missing)
+    #[arg(
+        long = "output-file",
+        value_name = "FILE",
+        conflicts_with_all = ["output", "output_dir"]
+    )]
+    pub output_file: Option<PathBuf>,
+
+    /// Explicit output directory destination (timestamped filename generated inside)
+    #[arg(
+        long = "output-dir",
+        value_name = "DIR",
+        conflicts_with_all = ["output", "output_file"]
+    )]
+    pub output_dir: Option<PathBuf>,
 
     /// Copy screenshot directly to system clipboard
     #[arg(short = 'c', long = "clipboard")]
@@ -204,5 +225,27 @@ mod tests {
         assert_eq!(cli.format, Some(ImageFormat::Webp));
         assert!(cli.json);
         assert!(cli.verbose);
+    }
+
+    #[test]
+    fn test_cli_parsing_output_file_and_dir() {
+        let cli_file = Cli::try_parse_from(["rgc-cli", "--output-file", "dest.png"]).unwrap();
+        assert_eq!(cli_file.output_file, Some(PathBuf::from("dest.png")));
+        assert_eq!(cli_file.output, None);
+        assert_eq!(cli_file.output_dir, None);
+
+        let cli_dir = Cli::try_parse_from(["rgc-cli", "--output-dir", "captures"]).unwrap();
+        assert_eq!(cli_dir.output_dir, Some(PathBuf::from("captures")));
+        assert_eq!(cli_dir.output, None);
+        assert_eq!(cli_file.output_file, Some(PathBuf::from("dest.png")));
+
+        // Conflict: --output and --output-file
+        assert!(Cli::try_parse_from(["rgc-cli", "-o", "out.png", "--output-file", "file.png"]).is_err());
+
+        // Conflict: --output and --output-dir
+        assert!(Cli::try_parse_from(["rgc-cli", "-o", "out.png", "--output-dir", "dir"]).is_err());
+
+        // Conflict: --output-file and --output-dir
+        assert!(Cli::try_parse_from(["rgc-cli", "--output-file", "out.png", "--output-dir", "dir"]).is_err());
     }
 }
