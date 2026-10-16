@@ -1,6 +1,7 @@
 mod capture;
 mod cli;
 mod doctor;
+mod mcp;
 mod output;
 
 use std::fs;
@@ -54,7 +55,15 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Cli) -> Result<(), ApiError> {
-    // 0. Handle system diagnostics if requested
+    // 0. Handle MCP stdio server mode
+    if args.mcp {
+        mcp::run_mcp_server().map_err(|e| {
+            ApiError::new(ErrorCode::IoError, format!("MCP server error: {e}"))
+        })?;
+        return Ok(());
+    }
+
+    // 1. Handle system diagnostics if requested
     if args.doctor {
         let report = doctor::run_doctor();
         if args.json {

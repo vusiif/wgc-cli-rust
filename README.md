@@ -12,6 +12,7 @@ Fast, lightweight, and cross-platform command-line screen capture utility writte
 - **Pure Cross-Platform**: Supports Windows, macOS, and Linux (X11 & Wayland) with zero OS-specific C/C++ glue code.
 - **Modern Formats (PNG, JPEG, WebP)**: Native pure-Rust WebP encoding support, typically producing significantly smaller files than PNG (often ~20-35% savings depending on image entropy) with pixel-perfect clarity.
 - **Structured JSON Mode**: `--json` flag formats both monitor lists and capture results as structured JSON, ideal for AI agents and script automation.
+- **Model Context Protocol (MCP)**: Built-in `--mcp` stdio server implementing the official MCP specification with tools for screen capture (base64 image return), monitor enumeration, and system diagnostics.
 - **System Diagnostics**: Built-in `--doctor` flag to inspect platform display subsystems, DPI scales, capture backends, and clipboard readiness.
 - **System Clipboard Export**: Direct-to-clipboard capture via `--clipboard` / `-c` (cross-platform via `arboard`) without touching the filesystem.
 - **Stdout Streaming**: Stream raw encoded image bytes to `stdout` (`-o -`) with graceful `BrokenPipe` handling for seamless piping with `wl-copy`, `xclip`, ImageMagick, ffmpeg, or AI pipelines.
@@ -42,6 +43,7 @@ Usage: rgc-cli [OPTIONS]
 
 Options:
       --doctor                Run diagnostic environment check and inspect capture capabilities
+      --mcp                   Start Model Context Protocol (MCP) stdio server for AI agent automation
   -l, --list-monitors         List all available monitors and exit
   -m, --monitor <INDEX>       Monitor index to capture (0-indexed). Defaults to primary monitor
   -r, --region <x,y,w,h>      Region to capture in coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
@@ -199,6 +201,17 @@ Output:
 }
 ```
 
+#### 11. Run Model Context Protocol (MCP) Server for AI Agents
+`rgc-cli` natively acts as an MCP server over stdio using standard JSON-RPC 2.0 (compatible with Claude Desktop, Cursor, Cline, Roo Code, etc.):
+```bash
+rgc-cli --mcp
+```
+
+**Exposed MCP Tools:**
+- `list_monitors`: Enumerate connected displays with resolution and DPI scale factor.
+- `capture_screen`: Capture display or specified region with direct base64 image return (`image/png`, `image/webp`, `image/jpeg`) or file destination.
+- `doctor`: Inspect active display subsystem and screen capture readiness.
+
 ---
 
 ## 📐 Coordinate System & DPI Semantics
@@ -216,6 +229,7 @@ Output:
 - [`src/cli.rs`](src/cli.rs): Type-safe command-line parsing powered by `clap` derive, including custom `Region` parser with boundary checks and serde derivations.
 - [`src/capture.rs`](src/capture.rs): Core capture abstraction, DPI logical-to-physical coordinate mapping, multi-monitor querying, and bounds checking.
 - [`src/doctor.rs`](src/doctor.rs): Environment and hardware diagnostics, subsystem capability checks, and structured reporting.
+- [`src/mcp.rs`](src/mcp.rs): Model Context Protocol (MCP) stdio server implementation, RFC 4648 base64 encoding, and tool execution.
 - [`src/output.rs`](src/output.rs): Clipboard export via `arboard`, stdout streaming with BrokenPipe safety, collision-resistant timestamping, format validation, and unified JSON envelope schema.
 
 ---

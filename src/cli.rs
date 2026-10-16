@@ -87,8 +87,12 @@ impl ImageFormat {
 )]
 pub struct Cli {
     /// Run diagnostic environment check and inspect capture capabilities
-    #[arg(long = "doctor", conflicts_with_all = ["list_monitors", "monitor", "region"])]
+    #[arg(long = "doctor", conflicts_with_all = ["mcp", "list_monitors", "monitor", "region"])]
     pub doctor: bool,
+
+    /// Start Model Context Protocol (MCP) stdio server for AI agent automation
+    #[arg(long = "mcp", conflicts_with_all = ["doctor", "list_monitors", "monitor", "region", "output", "output_file", "output_dir", "clipboard"])]
+    pub mcp: bool,
 
     /// List all available monitors and exit
     #[arg(short = 'l', long = "list-monitors")]
