@@ -370,11 +370,21 @@ pub fn write_to_stdout(image: &DynamicImage, format: ImageFormat) -> Result<(), 
         .write_to(&mut buffer, image_format)
         .map_err(OutputError::StdoutFailed)?;
 
-    out.write_all(buffer.get_ref())
-        .map_err(OutputError::StdoutIoFailed)?;
+    if let Err(e) = out.write_all(buffer.get_ref()) {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            debug!("Downstream pipe closed by consumer (BrokenPipe)");
+            return Ok(());
+        }
+        return Err(OutputError::StdoutIoFailed(e));
+    }
 
-    out.flush()
-        .map_err(OutputError::StdoutIoFailed)?;
+    if let Err(e) = out.flush() {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            debug!("Downstream pipe closed by consumer during flush (BrokenPipe)");
+            return Ok(());
+        }
+        return Err(OutputError::StdoutIoFailed(e));
+    }
 
     Ok(())
 }

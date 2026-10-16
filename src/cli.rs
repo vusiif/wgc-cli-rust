@@ -86,6 +86,10 @@ impl ImageFormat {
     long_about = "Fast, lightweight, and cross-platform screen capture utility supporting multi-monitor selection, high-DPI scaling, clipboard export, and stdout streaming."
 )]
 pub struct Cli {
+    /// Run diagnostic environment check and inspect capture capabilities
+    #[arg(long = "doctor", conflicts_with_all = ["list_monitors", "monitor", "region"])]
+    pub doctor: bool,
+
     /// List all available monitors and exit
     #[arg(short = 'l', long = "list-monitors")]
     pub list_monitors: bool,

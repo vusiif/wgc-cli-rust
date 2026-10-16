@@ -10,14 +10,15 @@ Fast, lightweight, and cross-platform command-line screen capture utility writte
 ## 🌟 Features
 
 - **Pure Cross-Platform**: Supports Windows, macOS, and Linux (X11 & Wayland) with zero OS-specific C/C++ glue code.
-- **Modern Formats (PNG, JPEG, WebP)**: Native pure-Rust WebP encoding support, producing files ~30% smaller than PNG with pixel-perfect lossless clarity.
+- **Modern Formats (PNG, JPEG, WebP)**: Native pure-Rust WebP encoding support, typically producing significantly smaller files than PNG (often ~20-35% savings depending on image entropy) with pixel-perfect clarity.
 - **Structured JSON Mode**: `--json` flag formats both monitor lists and capture results as structured JSON, ideal for AI agents and script automation.
+- **System Diagnostics**: Built-in `--doctor` flag to inspect platform display subsystems, DPI scales, capture backends, and clipboard readiness.
 - **System Clipboard Export**: Direct-to-clipboard capture via `--clipboard` / `-c` (cross-platform via `arboard`) without touching the filesystem.
-- **Stdout Streaming**: Stream raw encoded image bytes to `stdout` (`-o -`) for easy piping with `wl-copy`, `xclip`, ImageMagick, ffmpeg, or AI pipelines.
+- **Stdout Streaming**: Stream raw encoded image bytes to `stdout` (`-o -`) with graceful `BrokenPipe` handling for seamless piping with `wl-copy`, `xclip`, ImageMagick, ffmpeg, or AI pipelines.
 - **Smart Format Auto-Inference**: Automatically infers WebP, JPEG, and PNG from file extensions (e.g. `-o shot.webp`), with manual override via `--format`.
 - **High-DPI Awareness**: Explicit translation of user logical coordinates into physical pixels with DPI scaling factor (`scale_factor`) for pixel-perfect cropping on Retina and 4K displays.
 - **Multi-Monitor Support**: Inspect all connected displays and select any monitor by index (`--list-monitors`, `--monitor <INDEX>`).
-- **Region Cropping**: Flexible rectangle cropping (`--region x,y,w,h`) using zero-copy sub-image operations in hot paths.
+- **Region Cropping**: Flexible rectangle cropping (`--region x,y,w,h`) using zero-copy sub-image operations on the captured frame buffer.
 - **Delayed Capture**: Built-in timer delay before taking screenshot (`--delay <MS>`).
 
 ---
@@ -30,7 +31,7 @@ Ensure you have the Rust toolchain installed:
 cargo build --release
 ```
 
-The compiled release binary is located at `target/release/rgc-cli` (or `rgc-cli.exe` on Windows), weighing in at just **~2.2 MB**.
+The compiled release binary is located at `target/release/rgc-cli` (or `rgc-cli.exe` on Windows), typically weighing in at approximately **~2 to 3 MB** depending on target platform and LTO settings.
 
 ---
 
@@ -40,6 +41,7 @@ The compiled release binary is located at `target/release/rgc-cli` (or `rgc-cli.
 Usage: rgc-cli [OPTIONS]
 
 Options:
+      --doctor                Run diagnostic environment check and inspect capture capabilities
   -l, --list-monitors         List all available monitors and exit
   -m, --monitor <INDEX>       Monitor index to capture (0-indexed). Defaults to primary monitor
   -r, --region <x,y,w,h>      Region to capture in coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
@@ -168,6 +170,35 @@ rgc-cli -d 1500 -r 200,200,600,400 -o cropped.png
 rgc-cli --coords physical -r 0,0,1920,1080 -o raw_pixels.png
 ```
 
+#### 10. Run system diagnostics
+```bash
+# Text report
+rgc-cli --doctor
+
+# Structured JSON report
+rgc-cli --doctor --json
+```
+Output:
+```json
+{
+  "ok": true,
+  "data": {
+    "os": "windows",
+    "arch": "x86_64",
+    "backend": "Windows Graphics Capture (WGC) / DXGI / GDI",
+    "monitorsDetected": 1,
+    "primaryMonitor": "[0] \\\\.\\DISPLAY1 - 2560x1440 @ 1.50x",
+    "clipboardAvailable": true,
+    "supportedFormats": [
+      "PNG (Lossless)",
+      "JPEG (Standard)",
+      "WebP (High-efficiency native)"
+    ],
+    "status": "Operational"
+  }
+}
+```
+
 ---
 
 ## 📐 Coordinate System & DPI Semantics
@@ -184,7 +215,8 @@ rgc-cli --coords physical -r 0,0,1920,1080 -o raw_pixels.png
 - [`src/main.rs`](src/main.rs): Clean CLI entry point, centralized error handling, and top-level pipeline orchestration.
 - [`src/cli.rs`](src/cli.rs): Type-safe command-line parsing powered by `clap` derive, including custom `Region` parser with boundary checks and serde derivations.
 - [`src/capture.rs`](src/capture.rs): Core capture abstraction, DPI logical-to-physical coordinate mapping, multi-monitor querying, and bounds checking.
-- [`src/output.rs`](src/output.rs): Clipboard export via `arboard`, stdout streaming, collision-resistant timestamping, format validation, and unified JSON envelope schema.
+- [`src/doctor.rs`](src/doctor.rs): Environment and hardware diagnostics, subsystem capability checks, and structured reporting.
+- [`src/output.rs`](src/output.rs): Clipboard export via `arboard`, stdout streaming with BrokenPipe safety, collision-resistant timestamping, format validation, and unified JSON envelope schema.
 
 ---
 

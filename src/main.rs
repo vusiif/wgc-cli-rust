@@ -1,5 +1,6 @@
 mod capture;
 mod cli;
+mod doctor;
 mod output;
 
 use std::fs;
@@ -53,6 +54,40 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Cli) -> Result<(), ApiError> {
+    // 0. Handle system diagnostics if requested
+    if args.doctor {
+        let report = doctor::run_doctor();
+        if args.json {
+            let response = ApiResponse::success(report);
+            let json_str = serde_json::to_string_pretty(&response).map_err(|e| {
+                ApiError::new(ErrorCode::EncodeFailed, format!("JSON serialization failed: {e}"))
+            })?;
+            println!("{}", json_str);
+            return Ok(());
+        }
+
+        println!("[rgc-cli Diagnostics Report]");
+        println!("{:-<65}", "");
+        println!("Operating System:    {} ({})", report.os, report.arch);
+        println!("Capture Backend:     {}", report.backend);
+        println!("Monitors Detected:   {}", report.monitors_detected);
+        if let Some(prim) = report.primary_monitor {
+            println!("Primary Display:     {}", prim);
+        }
+        println!(
+            "Clipboard Access:    {}",
+            if report.clipboard_available {
+                "Available"
+            } else {
+                "Unavailable"
+            }
+        );
+        println!("Supported Formats:   {}", report.supported_formats.join(", "));
+        println!("Subsystem Status:    {}", report.status);
+        println!("{:-<65}", "");
+        return Ok(());
+    }
+
     // 1. Determine output destination and validate arguments early
     let destination = output::determine_output_destination(
         args.output.as_deref(),
