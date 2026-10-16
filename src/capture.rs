@@ -3,7 +3,7 @@ use log::debug;
 use thiserror::Error;
 use xcap::Monitor;
 
-use crate::cli::Region;
+use crate::cli::{CoordMode, Region};
 
 #[derive(Error, Debug)]
 pub enum CaptureError {
@@ -147,18 +147,15 @@ pub fn find_primary_monitor_index(monitors: &[Monitor]) -> usize {
     0
 }
 
-/// Map user logical coordinates to physical pixels taking into account the monitor's DPI scale factor.
-/// Employs overflow-safe arithmetic and validates scaling factors and bounds.
-pub fn logical_to_physical_region(
+/// Resolve crop region from user coordinates (logical or physical) to physical monitor pixels.
+/// Employs overflow-safe arithmetic, scale validation, and bounds checking.
+pub fn resolve_crop_region(
     region: &Region,
+    coords: CoordMode,
     scale_factor: f32,
     monitor_width: u32,
     monitor_height: u32,
 ) -> Result<(u32, u32, u32, u32), CaptureError> {
-    if !scale_factor.is_finite() || scale_factor <= 0.0 {
-        return Err(CaptureError::InvalidScaleFactor(scale_factor));
-    }
-
     if region.x < 0 || region.y < 0 {
         return Err(CaptureError::RegionOutOfBounds {
             x: region.x.max(0) as u32,
@@ -170,39 +167,50 @@ pub fn logical_to_physical_region(
         });
     }
 
-    let scale = scale_factor as f64;
-    let phys_x_f = (region.x as f64 * scale).round();
-    let phys_y_f = (region.y as f64 * scale).round();
-    let phys_w_f = (region.width as f64 * scale).round();
-    let phys_h_f = (region.height as f64 * scale).round();
+    let (phys_x, phys_y, phys_w, phys_h) = match coords {
+        CoordMode::Physical => (region.x as u32, region.y as u32, region.width, region.height),
+        CoordMode::Logical => {
+            if !scale_factor.is_finite() || scale_factor <= 0.0 {
+                return Err(CaptureError::InvalidScaleFactor(scale_factor));
+            }
 
-    if phys_x_f < 0.0
-        || phys_y_f < 0.0
-        || phys_w_f <= 0.0
-        || phys_h_f <= 0.0
-        || phys_x_f > u32::MAX as f64
-        || phys_y_f > u32::MAX as f64
-        || phys_w_f > u32::MAX as f64
-        || phys_h_f > u32::MAX as f64
-    {
-        return Err(CaptureError::RegionOutOfBounds {
-            x: phys_x_f.clamp(0.0, u32::MAX as f64) as u32,
-            y: phys_y_f.clamp(0.0, u32::MAX as f64) as u32,
-            width: phys_w_f.clamp(0.0, u32::MAX as f64) as u32,
-            height: phys_h_f.clamp(0.0, u32::MAX as f64) as u32,
-            monitor_w: monitor_width,
-            monitor_h: monitor_height,
-        });
-    }
+            let scale = scale_factor as f64;
+            let phys_x_f = (region.x as f64 * scale).round();
+            let phys_y_f = (region.y as f64 * scale).round();
+            let phys_w_f = (region.width as f64 * scale).round();
+            let phys_h_f = (region.height as f64 * scale).round();
 
-    let phys_x = phys_x_f as u32;
-    let phys_y = phys_y_f as u32;
-    let phys_w = phys_w_f as u32;
-    let phys_h = phys_h_f as u32;
+            if phys_x_f < 0.0
+                || phys_y_f < 0.0
+                || phys_w_f <= 0.0
+                || phys_h_f <= 0.0
+                || phys_x_f > u32::MAX as f64
+                || phys_y_f > u32::MAX as f64
+                || phys_w_f > u32::MAX as f64
+                || phys_h_f > u32::MAX as f64
+            {
+                return Err(CaptureError::RegionOutOfBounds {
+                    x: phys_x_f.clamp(0.0, u32::MAX as f64) as u32,
+                    y: phys_y_f.clamp(0.0, u32::MAX as f64) as u32,
+                    width: phys_w_f.clamp(0.0, u32::MAX as f64) as u32,
+                    height: phys_h_f.clamp(0.0, u32::MAX as f64) as u32,
+                    monitor_w: monitor_width,
+                    monitor_h: monitor_height,
+                });
+            }
+
+            (
+                phys_x_f as u32,
+                phys_y_f as u32,
+                phys_w_f as u32,
+                phys_h_f as u32,
+            )
+        }
+    };
 
     debug!(
-        "Translated region: logical({:?}) * scale({}) -> physical(x={}, y={}, w={}, h={})",
-        region, scale_factor, phys_x, phys_y, phys_w, phys_h
+        "Resolved crop region: coords={:?}, input={:?}, scale={} -> physical(x={}, y={}, w={}, h={}) on display({}x{})",
+        coords, region, scale_factor, phys_x, phys_y, phys_w, phys_h, monitor_width, monitor_height
     );
 
     // Overflow-safe bounds check:
@@ -230,6 +238,23 @@ pub fn logical_to_physical_region(
     Ok((phys_x, phys_y, phys_w, phys_h))
 }
 
+/// Backward compatibility alias for resolve_crop_region in Logical mode.
+#[allow(dead_code)]
+pub fn logical_to_physical_region(
+    region: &Region,
+    scale_factor: f32,
+    monitor_width: u32,
+    monitor_height: u32,
+) -> Result<(u32, u32, u32, u32), CaptureError> {
+    resolve_crop_region(
+        region,
+        CoordMode::Logical,
+        scale_factor,
+        monitor_width,
+        monitor_height,
+    )
+}
+
 /// Capture the primary monitor and return raw RGBA image data in memory.
 #[allow(dead_code)]
 pub fn capture_primary_monitor() -> Result<RgbaImage, CaptureError> {
@@ -247,10 +272,11 @@ pub fn capture_primary_monitor() -> Result<RgbaImage, CaptureError> {
 }
 
 /// Capture a screenshot from a specific monitor index (or primary by default),
-/// optionally cropping to a specified logical region.
+/// optionally cropping to a specified region according to the chosen coordinate mode.
 pub fn capture_screen(
     monitor_index: Option<usize>,
     region: Option<&Region>,
+    coords: CoordMode,
 ) -> Result<DynamicImage, CaptureError> {
     let monitors = get_monitors()?;
     if monitors.is_empty() {
@@ -288,10 +314,22 @@ pub fn capture_screen(
             .map_err(CaptureError::MonitorPropertyFailed)?;
         let scale_factor = target_monitor.scale_factor().unwrap_or(1.0);
 
-        let (x, y, w, h) = logical_to_physical_region(reg, scale_factor, width, height)?;
-        debug!("Cropping image to physical region: x={}, y={}, w={}, h={}", x, y, w, h);
+        let (x, y, w, h) = resolve_crop_region(reg, coords, scale_factor, width, height)?;
 
-        // Zero-cost sub-image cropping view converted to owned buffer
+        let actual_w = raw_image.width();
+        let actual_h = raw_image.height();
+        if x >= actual_w || y >= actual_h || w > actual_w - x || h > actual_h - y {
+            return Err(CaptureError::RegionOutOfBounds {
+                x,
+                y,
+                width: w,
+                height: h,
+                monitor_w: actual_w,
+                monitor_h: actual_h,
+            });
+        }
+
+        debug!("Cropping image to physical region: x={}, y={}, w={}, h={}", x, y, w, h);
         let cropped = image::imageops::crop_imm(&raw_image, x, y, w, h).to_image();
         Ok(DynamicImage::ImageRgba8(cropped))
     } else {
@@ -327,18 +365,84 @@ mod tests {
             height: 100,
         };
 
-        let captured = capture_screen(Some(0), Some(&region)).expect("Capture with region should succeed");
+        let captured = capture_screen(Some(0), Some(&region), CoordMode::Logical)
+            .expect("Capture with region should succeed");
         assert!(captured.width() >= 100);
         assert!(captured.height() >= 100);
     }
 
     #[test]
     fn test_capture_screen_invalid_monitor_index() {
-        let err = capture_screen(Some(9999), None).unwrap_err();
+        let err = capture_screen(Some(9999), None, CoordMode::Logical).unwrap_err();
         match err {
             CaptureError::MonitorNotFound(idx, _) => assert_eq!(idx, 9999),
             _ => panic!("Expected MonitorNotFound error"),
         }
+    }
+
+    #[test]
+    fn test_resolve_crop_region_dpi_matrix() {
+        let region = Region {
+            x: 100,
+            y: 100,
+            width: 200,
+            height: 200,
+        };
+
+        // 1.0x Scale (standard 1080p display)
+        let (x1, y1, w1, h1) =
+            resolve_crop_region(&region, CoordMode::Logical, 1.0, 1920, 1080).unwrap();
+        assert_eq!((x1, y1, w1, h1), (100, 100, 200, 200));
+
+        // 1.25x Scale (125% DPI)
+        let (x125, y125, w125, h125) =
+            resolve_crop_region(&region, CoordMode::Logical, 1.25, 1920, 1080).unwrap();
+        assert_eq!((x125, y125, w125, h125), (125, 125, 250, 250));
+
+        // 1.5x Scale (150% DPI, e.g. 1440p)
+        let (x15, y15, w15, h15) =
+            resolve_crop_region(&region, CoordMode::Logical, 1.5, 2560, 1440).unwrap();
+        assert_eq!((x15, y15, w15, h15), (150, 150, 300, 300));
+
+        // 2.0x Scale (200% Retina / 4K UHD)
+        let (x2, y2, w2, h2) =
+            resolve_crop_region(&region, CoordMode::Logical, 2.0, 3840, 2160).unwrap();
+        assert_eq!((x2, y2, w2, h2), (200, 200, 400, 400));
+    }
+
+    #[test]
+    fn test_resolve_crop_region_physical_mode() {
+        let region = Region {
+            x: 50,
+            y: 60,
+            width: 800,
+            height: 600,
+        };
+
+        // In physical mode, scale_factor is ignored and coordinates map 1:1 to pixels
+        let (x, y, w, h) =
+            resolve_crop_region(&region, CoordMode::Physical, 2.5, 1920, 1080).unwrap();
+        assert_eq!((x, y, w, h), (50, 60, 800, 600));
+
+        // Edge boundary in physical mode
+        let edge = Region {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let (ex, ey, ew, eh) =
+            resolve_crop_region(&edge, CoordMode::Physical, 1.0, 1920, 1080).unwrap();
+        assert_eq!((ex, ey, ew, eh), (0, 0, 1920, 1080));
+
+        // 1 pixel out of bounds in physical mode
+        let out_edge = Region {
+            x: 0,
+            y: 0,
+            width: 1921,
+            height: 1080,
+        };
+        assert!(resolve_crop_region(&out_edge, CoordMode::Physical, 1.0, 1920, 1080).is_err());
     }
 
     #[test]

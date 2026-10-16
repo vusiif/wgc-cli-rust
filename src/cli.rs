@@ -47,6 +47,17 @@ impl FromStr for Region {
     }
 }
 
+/// Coordinate space for region cropping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CoordMode {
+    /// Logical coordinates scaled by monitor DPI (default)
+    #[default]
+    Logical,
+    /// Exact physical pixel coordinates (1:1 without DPI scaling)
+    Physical,
+}
+
 /// Supported output image formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default, Serialize, Deserialize)]
 pub enum ImageFormat {
@@ -83,9 +94,13 @@ pub struct Cli {
     #[arg(short = 'm', long = "monitor", value_name = "INDEX")]
     pub monitor: Option<usize>,
 
-    /// Region to capture in logical coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
+    /// Region to capture in coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
     #[arg(short = 'r', long = "region", value_name = "x,y,w,h")]
     pub region: Option<Region>,
+
+    /// Coordinate system for region cropping: 'logical' (scaled by monitor DPI) or 'physical' (exact pixels)
+    #[arg(long = "coords", value_enum, default_value_t = CoordMode::Logical)]
+    pub coords: CoordMode,
 
     /// Output file path or directory, or '-' for stdout stream. Defaults to timestamped file in CWD
     #[arg(
@@ -247,5 +262,19 @@ mod tests {
 
         // Conflict: --output-file and --output-dir
         assert!(Cli::try_parse_from(["rgc-cli", "--output-file", "out.png", "--output-dir", "dir"]).is_err());
+    }
+
+    #[test]
+    fn test_cli_parsing_coords() {
+        let cli_default = Cli::try_parse_from(["rgc-cli"]).unwrap();
+        assert_eq!(cli_default.coords, CoordMode::Logical);
+
+        let cli_physical = Cli::try_parse_from(["rgc-cli", "--coords", "physical"]).unwrap();
+        assert_eq!(cli_physical.coords, CoordMode::Physical);
+
+        let cli_logical = Cli::try_parse_from(["rgc-cli", "--coords", "logical"]).unwrap();
+        assert_eq!(cli_logical.coords, CoordMode::Logical);
+
+        assert!(Cli::try_parse_from(["rgc-cli", "--coords", "invalid"]).is_err());
     }
 }

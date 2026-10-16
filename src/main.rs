@@ -122,10 +122,10 @@ fn run(args: Cli) -> Result<(), ApiError> {
 
     // 4. Perform capture with monitor selection & optional region cropping
     debug!(
-        "Initiating capture (monitor={:?}, region={:?})",
-        args.monitor, args.region
+        "Initiating capture (monitor={:?}, region={:?}, coords={:?})",
+        args.monitor, args.region, args.coords
     );
-    let dynamic_image = capture::capture_screen(args.monitor, args.region.as_ref())?;
+    let dynamic_image = capture::capture_screen(args.monitor, args.region.as_ref(), args.coords)?;
     let img_width = dynamic_image.width();
     let img_height = dynamic_image.height();
 

@@ -42,7 +42,8 @@ Usage: rgc-cli [OPTIONS]
 Options:
   -l, --list-monitors         List all available monitors and exit
   -m, --monitor <INDEX>       Monitor index to capture (0-indexed). Defaults to primary monitor
-  -r, --region <x,y,w,h>      Region to capture in logical coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
+  -r, --region <x,y,w,h>      Region to capture in coordinates: 'x,y,w,h' (e.g. 100,100,800,600)
+      --coords <MODE>         Coordinate system for region: 'logical' (default, scaled by DPI) or 'physical' (raw pixels)
   -o, --output <PATH>         Output file path, directory, or '-' for stdout stream. Defaults to timestamped file in CWD
       --output-file <FILE>    Explicit output file destination (creates parent directories if missing)
       --output-dir <DIR>      Explicit output directory destination (timestamped filename generated inside)
@@ -161,6 +162,20 @@ rgc-cli -c -o ./archive/
 ```bash
 rgc-cli -d 1500 -r 200,200,600,400 -o cropped.png
 ```
+
+#### 9. Exact 1:1 physical pixel crop
+```bash
+rgc-cli --coords physical -r 0,0,1920,1080 -o raw_pixels.png
+```
+
+---
+
+## 📐 Coordinate System & DPI Semantics
+
+- **Origin `(0, 0)`**: Strictly defined as the top-left corner of the selected monitor (or primary monitor by default). Regions do not operate in arbitrary negative virtual desktop spaces.
+- **`--coords logical` (Default)**: User-provided values are treated as logical screen coordinates and multiplied by the display's DPI `scale_factor` (e.g. 1.25x, 1.5x, 2.0x) using overflow-safe rounded arithmetic.
+- **`--coords physical`**: User-provided values represent raw display buffer pixels directly, 1:1 without scaling.
+- **Safety**: Both modes strictly validate coordinate boundaries, non-zero positive dimensions, and verify against the actual captured frame buffer dimensions.
 
 ---
 
