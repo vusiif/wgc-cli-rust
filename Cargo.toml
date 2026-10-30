@@ -2,7 +2,7 @@
 name = "rgc-cli"
 version = "2.1.0"
 edition = "2021"
-description = "Cross-platform screen capture CLI utility written in Rust"
+description = "Fast, lightweight cross-platform screen capture CLI and MCP server in pure Rust"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

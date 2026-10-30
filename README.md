@@ -2,37 +2,44 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/vusiif/wgc-cli-rust)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-brightgreen.svg)](https://modelcontextprotocol.io)
 
-Fast, lightweight, and cross-platform command-line screen capture utility written purely in Rust.
+**[English](README.md)** | **[简体中文](README_zh.md)**
+
+Fast, lightweight, and cross-platform command-line screen capture utility and Model Context Protocol (MCP) server written purely in Rust.
+
+> [!NOTE]
+> `rgc-cli` is the cross-platform, pure-Rust evolution of the original `wgc-cli-rust` project. It eliminates all platform-dependent C++ glue and runs natively on Windows, macOS, and Linux with zero external native build dependencies.
 
 ---
 
 ## 🌟 Features
 
-- **Pure Cross-Platform**: Supports Windows, macOS, and Linux (X11 & Wayland) with zero OS-specific C/C++ glue code.
-- **Modern Formats (PNG, JPEG, WebP)**: Native pure-Rust WebP encoding support, typically producing significantly smaller files than PNG (often ~20-35% savings depending on image entropy) with pixel-perfect clarity.
-- **Structured JSON Mode**: `--json` flag formats both monitor lists and capture results as structured JSON, ideal for AI agents and script automation.
-- **Model Context Protocol (MCP)**: Built-in `--mcp` stdio server implementing the official MCP specification with tools for screen capture (base64 image return), monitor enumeration, and system diagnostics.
+- **Pure Cross-Platform**: Native support for Windows, macOS, and Linux (X11 & Wayland) with 100% safe Rust code (`#![forbid(unsafe_code)]`).
+- **Model Context Protocol (MCP)**: Built-in `--mcp` stdio server implementing the official MCP JSON-RPC 2.0 specification for seamless AI agent integration (Claude Desktop, Cursor, Cline, Roo Code).
+- **Modern Formats (PNG, JPEG, WebP)**: Native WebP encoding support, typically delivering ~20-35% file size reduction compared to PNG with lossless or near-lossless clarity.
+- **Structured JSON Mode**: `--json` flag formats monitor lists, captured metadata, and errors into machine-readable JSON envelopes, ideal for scripting and automation.
 - **System Diagnostics**: Built-in `--doctor` flag to inspect platform display subsystems, DPI scales, capture backends, and clipboard readiness.
-- **System Clipboard Export**: Direct-to-clipboard capture via `--clipboard` / `-c` (cross-platform via `arboard`) without touching the filesystem.
-- **Stdout Streaming**: Stream raw encoded image bytes to `stdout` (`-o -`) with graceful `BrokenPipe` handling for seamless piping with `wl-copy`, `xclip`, ImageMagick, ffmpeg, or AI pipelines.
-- **Smart Format Auto-Inference**: Automatically infers WebP, JPEG, and PNG from file extensions (e.g. `-o shot.webp`), with manual override via `--format`.
-- **High-DPI Awareness**: Explicit translation of user logical coordinates into physical pixels with DPI scaling factor (`scale_factor`) for pixel-perfect cropping on Retina and 4K displays.
-- **Multi-Monitor Support**: Inspect all connected displays and select any monitor by index (`--list-monitors`, `--monitor <INDEX>`).
-- **Region Cropping**: Flexible rectangle cropping (`--region x,y,w,h`) using zero-copy sub-image operations on the captured frame buffer.
+- **Direct Clipboard Export**: Copy screenshots directly to the system clipboard via `--clipboard` / `-c` without touching the filesystem.
+- **Stdout Streaming**: Stream raw encoded image bytes to stdout (`-o -`) with graceful `BrokenPipe` handling for seamless UNIX piping (`wl-copy`, `xclip`, ImageMagick, ffmpeg).
+- **High-DPI Awareness**: Accurate translation between user logical coordinates and physical screen pixels with display `scale_factor` (e.g. 1.25x, 1.5x, 2.0x).
+- **Multi-Monitor Selection**: Enumerate all connected displays and capture any screen by index (`--list-monitors`, `--monitor <INDEX>`).
+- **Sub-Image Region Cropping**: Flexible rectangle cropping (`--region x,y,w,h`) with fast bounds pre-validation.
+- **Collision-Resistant Naming**: Millisecond-accurate timestamping with atomic monotonic counter prevents filename collisions in rapid capture loops.
 - **Delayed Capture**: Built-in timer delay before taking screenshot (`--delay <MS>`).
 
 ---
 
 ## 📦 Installation & Build
 
-Ensure you have the Rust toolchain installed:
+Ensure you have the Rust toolchain installed (1.75+ recommended):
 
 ```bash
 cargo build --release
 ```
 
-The compiled release binary is located at `target/release/rgc-cli` (or `rgc-cli.exe` on Windows), typically weighing in at approximately **~2 to 3 MB** depending on target platform and LTO settings.
+The compiled release binary is located at `target/release/rgc-cli` (or `rgc-cli.exe` on Windows), typically weighing in at approximately **~2 to 3 MB** thanks to LTO and binary stripping.
 
 ---
 
@@ -70,7 +77,7 @@ rgc-cli -c
 
 #### 2. Pipe screenshot to another tool via stdout
 ```bash
-# Save via shell redirection or downstream CLI
+# Save via shell redirection
 rgc-cli -o - > screenshot.png
 
 # Linux Wayland / X11 clipboard pipe
@@ -138,8 +145,8 @@ Output:
 }
 ```
 
-#### 6. Structured Error Response Example
-When an error occurs in `--json` mode, machine-readable diagnostic details are returned to stdout with an appropriate exit code:
+#### 6. Structured Error Response
+When an error occurs in `--json` mode, machine-readable diagnostic details are returned to stdout with an appropriate non-zero exit code:
 ```bash
 rgc-cli -m 999 --json
 ```
@@ -174,7 +181,7 @@ rgc-cli --coords physical -r 0,0,1920,1080 -o raw_pixels.png
 
 #### 10. Run system diagnostics
 ```bash
-# Text report
+# Human-readable text report
 rgc-cli --doctor
 
 # Structured JSON report
@@ -201,22 +208,70 @@ Output:
 }
 ```
 
-#### 11. Run Model Context Protocol (MCP) Server for AI Agents
-`rgc-cli` natively acts as an MCP server over stdio using standard JSON-RPC 2.0 (compatible with Claude Desktop, Cursor, Cline, Roo Code, etc.):
-```bash
-rgc-cli --mcp
+---
+
+## 🤖 Model Context Protocol (MCP) Integration
+
+`rgc-cli` natively acts as an MCP stdio server conforming to JSON-RPC 2.0. This allows AI coding agents (Claude Desktop, Cursor, Cline, Roo Code, Windsurf) to directly take screenshots and inspect displays.
+
+### Exposed MCP Tools
+
+1. **`list_monitors`**: Enumerate all connected screens, resolutions, and DPI scale factors.
+2. **`capture_screen`**: Capture screen or cropped region with direct base64 image payload (`image/png`, `image/webp`, `image/jpeg`) or output file.
+   - Arguments: `monitor` (int/str), `region` (string `"x,y,w,h"`), `coords` (`"logical"` | `"physical"`), `format` (`"png"` | `"jpeg"` | `"webp"`), `outputPath` (string), `returnBase64` (bool).
+3. **`doctor`**: Diagnostic check of display subsystem, active backend, and clipboard capabilities.
+
+### Client Configuration Examples
+
+#### Claude Desktop (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "screen-capture": {
+      "command": "rgc-cli",
+      "args": ["--mcp"]
+    }
+  }
+}
 ```
 
-**Exposed MCP Tools:**
-- `list_monitors`: Enumerate connected displays with resolution and DPI scale factor.
-- `capture_screen`: Capture display or specified region with direct base64 image return (`image/png`, `image/webp`, `image/jpeg`) or file destination.
-- `doctor`: Inspect active display subsystem and screen capture readiness.
+#### Cline / Roo Code / Cursor (`mcp_settings.json`)
+
+```json
+{
+  "mcpServers": {
+    "rgc": {
+      "command": "/absolute/path/to/rgc-cli",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+---
+
+## 🚦 Exit Codes & Error Specification
+
+In `--json` mode or standard CLI usage, exit codes adhere strictly to the following specification:
+
+| Exit Code | Error Code Identifier | Stage | Description |
+|:---:|:---|:---|:---|
+| **0** | `SUCCESS` | `complete` | Operation succeeded |
+| **1** | `GENERIC_ERROR` | `execution` | Uncategorized failure |
+| **2** | `BAD_ARGS` | `cli_parsing` | Invalid arguments or conflicting CLI flags |
+| **3** | `NO_MONITOR` / `MONITOR_NOT_FOUND` | `monitor_selection` | No display found or specified index is out of bounds |
+| **4** | `REGION_OUT_OF_BOUNDS` | `region_calculation` | Crop coordinates exceed target monitor dimensions |
+| **5** | `CAPTURE_FAILED` | `capture` | OS capture API failed to capture display buffer |
+| **6** | `FORMAT_MISMATCH` | `format_inference` | Explicit `--format` contradicts file extension |
+| **7** | `IO_ERROR` / `ENCODE_FAILED` | `output_save` | Disk write error, missing permissions, or encoding failure |
+| **8** | `CLIPBOARD_ERROR` | `clipboard_export` | System clipboard unavailable or write failed |
 
 ---
 
 ## 📐 Coordinate System & DPI Semantics
 
-- **Origin `(0, 0)`**: Strictly defined as the top-left corner of the selected monitor (or primary monitor by default). Regions do not operate in arbitrary negative virtual desktop spaces.
+- **Origin `(0, 0)`**: Strictly defined as the top-left corner of the selected monitor (or primary monitor by default).
 - **`--coords logical` (Default)**: User-provided values are treated as logical screen coordinates and multiplied by the display's DPI `scale_factor` (e.g. 1.25x, 1.5x, 2.0x) using overflow-safe rounded arithmetic.
 - **`--coords physical`**: User-provided values represent raw display buffer pixels directly, 1:1 without scaling.
 - **Safety**: Both modes strictly validate coordinate boundaries, non-zero positive dimensions, and verify against the actual captured frame buffer dimensions.
@@ -247,3 +302,9 @@ Run hardware-dependent tests (requires active graphical desktop session and clip
 ```bash
 cargo test -- --ignored
 ```
+
+---
+
+## 📄 License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
