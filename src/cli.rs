@@ -87,15 +87,35 @@ impl ImageFormat {
 )]
 pub struct Cli {
     /// Run diagnostic environment check and inspect capture capabilities
-    #[arg(long = "doctor", conflicts_with_all = ["mcp", "list_monitors", "monitor", "region"])]
+    #[arg(
+        long = "doctor",
+        conflicts_with_all = [
+            "mcp", "list_monitors", "monitor", "region", "output",
+            "output_file", "output_dir", "clipboard", "delay", "coords"
+        ]
+    )]
     pub doctor: bool,
 
     /// Start Model Context Protocol (MCP) stdio server for AI agent automation
-    #[arg(long = "mcp", conflicts_with_all = ["doctor", "list_monitors", "monitor", "region", "output", "output_file", "output_dir", "clipboard"])]
+    #[arg(
+        long = "mcp",
+        conflicts_with_all = [
+            "doctor", "list_monitors", "monitor", "region", "output",
+            "output_file", "output_dir", "clipboard", "delay", "format",
+            "coords", "json"
+        ]
+    )]
     pub mcp: bool,
 
     /// List all available monitors and exit
-    #[arg(short = 'l', long = "list-monitors")]
+    #[arg(
+        short = 'l',
+        long = "list-monitors",
+        conflicts_with_all = [
+            "doctor", "mcp", "monitor", "region", "output",
+            "output_file", "output_dir", "clipboard", "delay", "coords"
+        ]
+    )]
     pub list_monitors: bool,
 
     /// Monitor index to capture (0-indexed). Defaults to primary monitor
@@ -265,7 +285,7 @@ mod tests {
         let cli_dir = Cli::try_parse_from(["rgc-cli", "--output-dir", "captures"]).unwrap();
         assert_eq!(cli_dir.output_dir, Some(PathBuf::from("captures")));
         assert_eq!(cli_dir.output, None);
-        assert_eq!(cli_file.output_file, Some(PathBuf::from("dest.png")));
+        assert_eq!(cli_dir.output_file, None);
 
         // Conflict: --output and --output-file
         assert!(
@@ -298,5 +318,22 @@ mod tests {
         assert_eq!(cli_logical.coords, CoordMode::Logical);
 
         assert!(Cli::try_parse_from(["rgc-cli", "--coords", "invalid"]).is_err());
+    }
+
+    #[test]
+    fn test_cli_parsing_mode_conflicts() {
+        // list_monitors conflicts with capture options
+        assert!(Cli::try_parse_from(["rgc-cli", "-l", "-o", "shot.png"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "-l", "-c"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "-l", "-m", "0"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "-l", "-r", "0,0,10,10"]).is_err());
+
+        // doctor conflicts with capture options
+        assert!(Cli::try_parse_from(["rgc-cli", "--doctor", "-o", "shot.png"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "--doctor", "-c"]).is_err());
+
+        // mcp conflicts with CLI formatting/output options
+        assert!(Cli::try_parse_from(["rgc-cli", "--mcp", "--json"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "--mcp", "-d", "1000"]).is_err());
     }
 }

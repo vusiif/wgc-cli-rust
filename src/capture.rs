@@ -29,8 +29,8 @@ pub enum CaptureError {
         "Specified crop region (x={x}, y={y}, w={width}, h={height}) is out of monitor bounds ({monitor_w}x{monitor_h})"
     )]
     RegionOutOfBounds {
-        x: u32,
-        y: u32,
+        x: i32,
+        y: i32,
         width: u32,
         height: u32,
         monitor_w: u32,
@@ -164,8 +164,8 @@ pub fn resolve_crop_region(
 ) -> Result<(u32, u32, u32, u32), CaptureError> {
     if region.x < 0 || region.y < 0 {
         return Err(CaptureError::RegionOutOfBounds {
-            x: region.x.max(0) as u32,
-            y: region.y.max(0) as u32,
+            x: region.x,
+            y: region.y,
             width: region.width,
             height: region.height,
             monitor_w: monitor_width,
@@ -201,8 +201,8 @@ pub fn resolve_crop_region(
                 || phys_h_f > u32::MAX as f64
             {
                 return Err(CaptureError::RegionOutOfBounds {
-                    x: phys_x_f.clamp(0.0, u32::MAX as f64) as u32,
-                    y: phys_y_f.clamp(0.0, u32::MAX as f64) as u32,
+                    x: phys_x_f.clamp(i32::MIN as f64, i32::MAX as f64) as i32,
+                    y: phys_y_f.clamp(i32::MIN as f64, i32::MAX as f64) as i32,
                     width: phys_w_f.clamp(0.0, u32::MAX as f64) as u32,
                     height: phys_h_f.clamp(0.0, u32::MAX as f64) as u32,
                     monitor_w: monitor_width,
@@ -237,8 +237,8 @@ pub fn resolve_crop_region(
 
     if !is_valid {
         return Err(CaptureError::RegionOutOfBounds {
-            x: phys_x,
-            y: phys_y,
+            x: phys_x as i32,
+            y: phys_y as i32,
             width: phys_w,
             height: phys_h,
             monitor_w: monitor_width,
@@ -312,11 +312,9 @@ pub fn capture_screen(
         target_monitor.is_primary()
     );
 
-    let raw_image = target_monitor
-        .capture_image()
-        .map_err(CaptureError::CaptureFailed)?;
-
-    if let Some(reg) = region {
+    // Fast pre-validation: validate crop region against reported monitor bounds before taking full screenshot
+    // to avoid unnecessary GPU/desktop capture and 30-50MB frame buffer allocation if out of bounds.
+    let resolved_crop = if let Some(reg) = region {
         let width = target_monitor
             .width()
             .map_err(CaptureError::MonitorPropertyFailed)?;
@@ -324,15 +322,28 @@ pub fn capture_screen(
             .height()
             .map_err(CaptureError::MonitorPropertyFailed)?;
         let scale_factor = target_monitor.scale_factor().unwrap_or(1.0);
+        Some(resolve_crop_region(
+            reg,
+            coords,
+            scale_factor,
+            width,
+            height,
+        )?)
+    } else {
+        None
+    };
 
-        let (x, y, w, h) = resolve_crop_region(reg, coords, scale_factor, width, height)?;
+    let raw_image = target_monitor
+        .capture_image()
+        .map_err(CaptureError::CaptureFailed)?;
 
+    if let Some((x, y, w, h)) = resolved_crop {
         let actual_w = raw_image.width();
         let actual_h = raw_image.height();
         if x >= actual_w || y >= actual_h || w > actual_w - x || h > actual_h - y {
             return Err(CaptureError::RegionOutOfBounds {
-                x,
-                y,
+                x: x as i32,
+                y: y as i32,
                 width: w,
                 height: h,
                 monitor_w: actual_w,
@@ -504,14 +515,20 @@ mod tests {
         };
         assert!(logical_to_physical_region(&overflow_region, 1.0, 1920, 1080).is_err());
 
-        // Negative coordinates
+        // Negative coordinates preserve accurate x/y in error
         let neg_region = Region {
-            x: -1,
-            y: 10,
+            x: -25,
+            y: -10,
             width: 100,
             height: 100,
         };
-        assert!(logical_to_physical_region(&neg_region, 1.0, 1920, 1080).is_err());
+        match logical_to_physical_region(&neg_region, 1.0, 1920, 1080).unwrap_err() {
+            CaptureError::RegionOutOfBounds { x, y, .. } => {
+                assert_eq!(x, -25);
+                assert_eq!(y, -10);
+            }
+            other => panic!("Expected RegionOutOfBounds, got: {other:?}"),
+        }
 
         // Invalid scale factors (zero, negative, NaN, infinite)
         assert!(logical_to_physical_region(&region, 0.0, 1920, 1080).is_err());

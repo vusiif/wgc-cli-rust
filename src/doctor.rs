@@ -24,7 +24,15 @@ pub fn run_doctor() -> DoctorReport {
     } else if cfg!(target_os = "macos") {
         "CoreGraphics / ScreenCaptureKit".to_string()
     } else {
-        "Wayland / X11 (via xcap)".to_string()
+        let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|s| s.eq_ignore_ascii_case("wayland"))
+                .unwrap_or(false);
+        if is_wayland {
+            "Linux Wayland (via xcap)".to_string()
+        } else {
+            "Linux X11 (via xcap)".to_string()
+        }
     };
 
     let (monitors_detected, primary_monitor) = match crate::capture::get_monitor_infos() {
@@ -53,10 +61,12 @@ pub fn run_doctor() -> DoctorReport {
         "WebP (High-efficiency native)".to_string(),
     ];
 
-    let status = if monitors_detected > 0 {
-        "Operational".to_string()
-    } else {
+    let status = if monitors_detected == 0 {
         "Degraded (No active displays detected)".to_string()
+    } else if !clipboard_available {
+        "Operational (Clipboard unavailable)".to_string()
+    } else {
+        "Operational".to_string()
     };
 
     DoctorReport {

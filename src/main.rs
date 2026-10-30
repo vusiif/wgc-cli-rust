@@ -106,31 +106,6 @@ fn run(args: Cli) -> Result<(), ApiError> {
         return Ok(());
     }
 
-    // 1. Determine output destination and validate arguments early
-    let destination = output::determine_output_destination(
-        args.output.as_deref(),
-        args.output_file.as_deref(),
-        args.output_dir.as_deref(),
-    )?;
-
-    let is_stdout = destination == OutputDestination::Stdout;
-
-    // R-01: Prohibit combining --json with -o - (stdout) to prevent stream corruption
-    if is_stdout && args.json {
-        return Err(ApiError::new(
-            ErrorCode::BadArgs,
-            "Cannot combine '--json' with standard output streaming ('-o -'). \
-             Binary image stream and structured JSON text cannot both occupy stdout.",
-        )
-        .with_stage("argument_validation")
-        .with_suggestion(
-            "To retrieve structured JSON metadata, save to a file or directory instead of stdout.",
-        ));
-    }
-
-    // Infer image format and validate against file extension if explicit format provided
-    let format = output::validate_and_infer_format(&destination, args.format)?;
-
     // 2. Handle monitor listing if requested
     if args.list_monitors {
         let monitors = capture::get_monitor_infos()?;
@@ -163,6 +138,31 @@ fn run(args: Cli) -> Result<(), ApiError> {
         }
         return Ok(());
     }
+
+    // 3. Determine output destination and validate arguments early
+    let destination = output::determine_output_destination(
+        args.output.as_deref(),
+        args.output_file.as_deref(),
+        args.output_dir.as_deref(),
+    )?;
+
+    let is_stdout = destination == OutputDestination::Stdout;
+
+    // R-01: Prohibit combining --json with -o - (stdout) to prevent stream corruption
+    if is_stdout && args.json {
+        return Err(ApiError::new(
+            ErrorCode::BadArgs,
+            "Cannot combine '--json' with standard output streaming ('-o -'). \
+             Binary image stream and structured JSON text cannot both occupy stdout.",
+        )
+        .with_stage("argument_validation")
+        .with_suggestion(
+            "To retrieve structured JSON metadata, save to a file or directory instead of stdout.",
+        ));
+    }
+
+    // Infer image format and validate against file extension if explicit format provided
+    let format = output::validate_and_infer_format(&destination, args.format)?;
 
     // 3. Handle delayed capture if requested
     if let Some(delay_ms) = args.delay {

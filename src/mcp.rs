@@ -333,22 +333,61 @@ fn execute_tool_call(name: &str, arguments: &serde_json::Value) -> ToolCallResul
 }
 
 fn execute_capture_tool(arguments: &serde_json::Value) -> ToolCallResult {
-    let monitor = arguments
-        .get("monitor")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
-
-    let region = if let Some(reg_str) = arguments.get("region").and_then(|v| v.as_str()) {
-        match Region::from_str(reg_str) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                return ToolCallResult {
-                    content: vec![ToolContent::Text {
-                        text: format!("Invalid region '{reg_str}': {e}"),
-                    }],
-                    is_error: true,
-                };
+    let monitor = if let Some(m_val) = arguments.get("monitor") {
+        if let Some(idx) = m_val.as_u64() {
+            Some(idx as usize)
+        } else if let Some(s) = m_val.as_str() {
+            match s.trim().parse::<usize>() {
+                Ok(idx) => Some(idx),
+                Err(_) => {
+                    return ToolCallResult {
+                        content: vec![ToolContent::Text {
+                            text: format!(
+                                "Invalid monitor index '{s}': expected a non-negative integer"
+                            ),
+                        }],
+                        is_error: true,
+                    };
+                }
             }
+        } else if !m_val.is_null() {
+            return ToolCallResult {
+                content: vec![ToolContent::Text {
+                    text: format!("Invalid monitor argument '{m_val}': expected integer index"),
+                }],
+                is_error: true,
+            };
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let region = if let Some(reg_val) = arguments.get("region") {
+        if let Some(reg_str) = reg_val.as_str() {
+            match Region::from_str(reg_str) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    return ToolCallResult {
+                        content: vec![ToolContent::Text {
+                            text: format!("Invalid region '{reg_str}': {e}"),
+                        }],
+                        is_error: true,
+                    };
+                }
+            }
+        } else if !reg_val.is_null() {
+            return ToolCallResult {
+                content: vec![ToolContent::Text {
+                    text: format!(
+                        "Invalid region parameter '{reg_val}': expected a string in 'x,y,w,h' format (e.g. '100,100,800,600')"
+                    ),
+                }],
+                is_error: true,
+            };
+        } else {
+            None
         }
     } else {
         None
@@ -374,6 +413,15 @@ fn execute_capture_tool(arguments: &serde_json::Value) -> ToolCallResult {
         .get("returnBase64")
         .and_then(|v| v.as_bool())
         .unwrap_or(output_path.is_none());
+
+    if output_path.is_none() && !return_base64 {
+        return ToolCallResult {
+            content: vec![ToolContent::Text {
+                text: "Invalid capture request: either 'outputPath' must be provided or 'returnBase64' must be true.".to_string(),
+            }],
+            is_error: true,
+        };
+    }
 
     let image = match capture::capture_screen(monitor, region.as_ref(), coords) {
         Ok(img) => img,
@@ -584,6 +632,11 @@ mod tests {
         let resp = handle_mcp_message(req).expect("response expected");
         assert!(resp.contains(r#""isError":true"#));
         assert!(resp.contains("Invalid region"));
+
+        let req_obj = r#"{"jsonrpc":"2.0","id":71,"method":"tools/call","params":{"name":"capture_screen","arguments":{"region":{"x":0,"y":0}}}}"#;
+        let resp_obj = handle_mcp_message(req_obj).expect("response expected");
+        assert!(resp_obj.contains(r#""isError":true"#));
+        assert!(resp_obj.contains("Invalid region parameter"));
     }
 
     #[test]
@@ -592,6 +645,28 @@ mod tests {
         let resp = handle_mcp_message(req).expect("response expected");
         assert!(resp.contains(r#""isError":true"#));
         assert!(resp.contains("Capture failed"));
+
+        // Monitor as numeric string is parsed
+        let req_str = r#"{"jsonrpc":"2.0","id":81,"method":"tools/call","params":{"name":"capture_screen","arguments":{"monitor":"99999"}}}"#;
+        let resp_str = handle_mcp_message(req_str).expect("response expected");
+        assert!(resp_str.contains(r#""isError":true"#));
+        assert!(resp_str.contains("Capture failed"));
+
+        // Non-numeric monitor string returns validation error
+        let req_bad_str = r#"{"jsonrpc":"2.0","id":82,"method":"tools/call","params":{"name":"capture_screen","arguments":{"monitor":"abc"}}}"#;
+        let resp_bad_str = handle_mcp_message(req_bad_str).expect("response expected");
+        assert!(resp_bad_str.contains(r#""isError":true"#));
+        assert!(resp_bad_str.contains("expected a non-negative integer"));
+    }
+
+    #[test]
+    fn test_handle_mcp_tool_call_no_output_or_base64() {
+        let req = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"capture_screen","arguments":{"returnBase64":false}}}"#;
+        let resp = handle_mcp_message(req).expect("response expected");
+        assert!(resp.contains(r#""isError":true"#));
+        assert!(
+            resp.contains("either 'outputPath' must be provided or 'returnBase64' must be true")
+        );
     }
 
     #[test]
