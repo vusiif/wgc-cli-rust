@@ -77,6 +77,25 @@ impl ImageFormat {
     }
 }
 
+/// Parses and validates a downscaling factor between 0.01 and 1.0.
+pub fn parse_scale_factor(s: &str) -> Result<f64, String> {
+    let factor: f64 = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("Invalid scale '{s}': expected a floating-point number"))?;
+    if !factor.is_finite() || factor <= 0.0 {
+        return Err(format!(
+            "Scale factor must be positive and non-zero (got {s})"
+        ));
+    }
+    if factor > 1.0 {
+        return Err(format!(
+            "Scale factor cannot exceed 1.0 (downscaling only, got {s})"
+        ));
+    }
+    Ok(factor)
+}
+
 /// Cross-platform command-line screen capture utility.
 #[derive(Parser, Debug)]
 #[command(
@@ -91,7 +110,8 @@ pub struct Cli {
         long = "doctor",
         conflicts_with_all = [
             "mcp", "list_monitors", "monitor", "region", "output",
-            "output_file", "output_dir", "clipboard", "delay", "coords"
+            "output_file", "output_dir", "clipboard", "delay", "coords",
+            "scale", "max_dimension", "quality"
         ]
     )]
     pub doctor: bool,
@@ -102,7 +122,7 @@ pub struct Cli {
         conflicts_with_all = [
             "doctor", "list_monitors", "monitor", "region", "output",
             "output_file", "output_dir", "clipboard", "delay", "format",
-            "coords", "json"
+            "coords", "json", "scale", "max_dimension", "quality"
         ]
     )]
     pub mcp: bool,
@@ -113,7 +133,8 @@ pub struct Cli {
         long = "list-monitors",
         conflicts_with_all = [
             "doctor", "mcp", "monitor", "region", "output",
-            "output_file", "output_dir", "clipboard", "delay", "coords"
+            "output_file", "output_dir", "clipboard", "delay", "coords",
+            "scale", "max_dimension", "quality"
         ]
     )]
     pub list_monitors: bool,
@@ -166,6 +187,32 @@ pub struct Cli {
     /// Output image format. If omitted, automatically inferred from file extension or defaults to PNG
     #[arg(short = 'f', long = "format", value_enum)]
     pub format: Option<ImageFormat>,
+
+    /// Downscale image by a factor between 0.01 and 1.0 (e.g. 0.5 for half resolution)
+    #[arg(
+        long = "scale",
+        value_name = "FACTOR",
+        conflicts_with = "max_dimension",
+        value_parser = parse_scale_factor
+    )]
+    pub scale: Option<f64>,
+
+    /// Constrain maximum image dimension (width or height) to PX pixels, preserving aspect ratio
+    #[arg(
+        long = "max-dimension",
+        value_name = "PX",
+        conflicts_with = "scale",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub max_dimension: Option<u32>,
+
+    /// Compression quality for JPEG output (1-100). Defaults to 85
+    #[arg(
+        long = "quality",
+        value_name = "1-100",
+        value_parser = clap::value_parser!(u8).range(1..=100)
+    )]
+    pub quality: Option<u8>,
 
     /// Output result as structured JSON (ideal for automation & AI agents)
     #[arg(long = "json")]
@@ -335,5 +382,27 @@ mod tests {
         // mcp conflicts with CLI formatting/output options
         assert!(Cli::try_parse_from(["rgc-cli", "--mcp", "--json"]).is_err());
         assert!(Cli::try_parse_from(["rgc-cli", "--mcp", "-d", "1000"]).is_err());
+    }
+
+    #[test]
+    fn test_cli_parsing_scale_and_quality() {
+        let cli = Cli::try_parse_from(["rgc-cli", "--scale", "0.5", "--quality", "80"]).unwrap();
+        assert_eq!(cli.scale, Some(0.5));
+        assert_eq!(cli.quality, Some(80));
+
+        let cli_dim = Cli::try_parse_from(["rgc-cli", "--max-dimension", "1920"]).unwrap();
+        assert_eq!(cli_dim.max_dimension, Some(1920));
+
+        // Conflict: --scale and --max-dimension
+        assert!(Cli::try_parse_from(["rgc-cli", "--scale", "0.5", "--max-dimension", "1920"]).is_err());
+
+        // Invalid scale > 1.0 or <= 0.0
+        assert!(Cli::try_parse_from(["rgc-cli", "--scale", "1.5"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "--scale", "0.0"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "--scale", "-0.5"]).is_err());
+
+        // Invalid quality > 100 or 0
+        assert!(Cli::try_parse_from(["rgc-cli", "--quality", "101"]).is_err());
+        assert!(Cli::try_parse_from(["rgc-cli", "--quality", "0"]).is_err());
     }
 }
