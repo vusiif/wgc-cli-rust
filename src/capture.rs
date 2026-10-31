@@ -399,10 +399,13 @@ mod tests {
 
     #[test]
     fn test_capture_screen_invalid_monitor_index() {
-        let err = capture_screen(Some(9999), None, CoordMode::Logical).unwrap_err();
-        match err {
-            CaptureError::MonitorNotFound(idx, _) => assert_eq!(idx, 9999),
-            _ => panic!("Expected MonitorNotFound error"),
+        match capture_screen(Some(9999), None, CoordMode::Logical) {
+            Err(CaptureError::MonitorNotFound(idx, _)) => assert_eq!(idx, 9999),
+            Err(CaptureError::NoMonitorsFound) | Err(CaptureError::ListMonitorsFailed(_)) => {
+                // In headless CI environments (e.g. GitHub Actions), no physical displays are connected.
+            }
+            Ok(_) => panic!("Expected capture_screen to fail with invalid monitor index"),
+            Err(other) => panic!("Expected MonitorNotFound or NoMonitorsFound, got: {other:?}"),
         }
     }
 
