@@ -65,6 +65,8 @@ Options:
       --scale <FACTOR>        Downscale image by a factor between 0.01 and 1.0 (e.g. 0.5 for half resolution)
       --max-dimension <PX>    Constrain maximum width or height to PX pixels, preserving aspect ratio
       --quality <1-100>       Compression quality for JPEG output (1-100, defaults to 85)
+      --open                  Open captured screenshot file with system default viewer
+      --completions <SHELL>   Generate shell completion script to stdout [possible values: bash, elvish, fish, powershell, zsh]
       --json                  Output result as structured JSON (ideal for automation & AI agents)
   -v, --verbose               Enable verbose / debug logging
   -q, --quiet                 Suppress non-error output
@@ -193,6 +195,22 @@ rgc-cli --max-dimension 1280 -o preview.png
 
 # JPEG output with custom compression quality
 rgc-cli -f jpeg --quality 80 -o shot.jpg
+```
+
+#### 11. Automatically Open Saved Screenshot in Default Viewer
+```bash
+# Capture and immediately open in default image viewer
+rgc-cli --open -o shot.png
+```
+
+#### 12. Shell Tab Completions Generation
+```bash
+# Generate PowerShell completions
+rgc-cli --completions powershell | Out-String | Invoke-Expression
+
+# Generate Bash / Zsh completions
+rgc-cli --completions bash > /etc/bash_completion.d/rgc-cli
+rgc-cli --completions zsh > "${fpath[1]}/_rgc-cli"
 ```
 
 #### 10. Run system diagnostics

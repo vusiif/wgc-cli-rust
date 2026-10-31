@@ -109,9 +109,9 @@ pub struct Cli {
     #[arg(
         long = "doctor",
         conflicts_with_all = [
-            "mcp", "list_monitors", "monitor", "region", "output",
+            "mcp", "list_monitors", "completions", "monitor", "region", "output",
             "output_file", "output_dir", "clipboard", "delay", "coords",
-            "scale", "max_dimension", "quality"
+            "scale", "max_dimension", "quality", "open"
         ]
     )]
     pub doctor: bool,
@@ -120,9 +120,9 @@ pub struct Cli {
     #[arg(
         long = "mcp",
         conflicts_with_all = [
-            "doctor", "list_monitors", "monitor", "region", "output",
+            "doctor", "list_monitors", "completions", "monitor", "region", "output",
             "output_file", "output_dir", "clipboard", "delay", "format",
-            "coords", "json", "scale", "max_dimension", "quality"
+            "coords", "json", "scale", "max_dimension", "quality", "open"
         ]
     )]
     pub mcp: bool,
@@ -132,12 +132,25 @@ pub struct Cli {
         short = 'l',
         long = "list-monitors",
         conflicts_with_all = [
-            "doctor", "mcp", "monitor", "region", "output",
+            "doctor", "mcp", "completions", "monitor", "region", "output",
             "output_file", "output_dir", "clipboard", "delay", "coords",
-            "scale", "max_dimension", "quality"
+            "scale", "max_dimension", "quality", "open"
         ]
     )]
     pub list_monitors: bool,
+
+    /// Generate shell completion script to stdout (bash, zsh, fish, powershell, elvish)
+    #[arg(
+        long = "completions",
+        value_name = "SHELL",
+        value_enum,
+        conflicts_with_all = [
+            "doctor", "mcp", "list_monitors", "monitor", "region", "output",
+            "output_file", "output_dir", "clipboard", "delay", "coords",
+            "scale", "max_dimension", "quality", "format", "json", "open"
+        ]
+    )]
+    pub completions: Option<clap_complete::Shell>,
 
     /// Monitor index to capture (0-indexed). Defaults to primary monitor
     #[arg(short = 'm', long = "monitor", value_name = "INDEX")]
@@ -217,6 +230,13 @@ pub struct Cli {
     /// Output result as structured JSON (ideal for automation & AI agents)
     #[arg(long = "json")]
     pub json: bool,
+
+    /// Open captured screenshot file with system default viewer
+    #[arg(
+        long = "open",
+        conflicts_with_all = ["doctor", "mcp", "list_monitors", "completions"]
+    )]
+    pub open: bool,
 
     /// Enable verbose / debug logging
     #[arg(short = 'v', long = "verbose")]
@@ -406,5 +426,18 @@ mod tests {
         // Invalid quality > 100 or 0
         assert!(Cli::try_parse_from(["rgc-cli", "--quality", "101"]).is_err());
         assert!(Cli::try_parse_from(["rgc-cli", "--quality", "0"]).is_err());
+
+        // Completions flag parsing and conflicts
+        let cli_comp = Cli::try_parse_from(["rgc-cli", "--completions", "bash"]).unwrap();
+        assert_eq!(cli_comp.completions, Some(clap_complete::Shell::Bash));
+        assert!(
+            Cli::try_parse_from(["rgc-cli", "--completions", "bash", "-o", "out.png"]).is_err()
+        );
+        assert!(Cli::try_parse_from(["rgc-cli", "--completions", "bash", "--doctor"]).is_err());
+
+        // Open flag parsing
+        let cli_open = Cli::try_parse_from(["rgc-cli", "--open"]).unwrap();
+        assert!(cli_open.open);
+        assert!(Cli::try_parse_from(["rgc-cli", "--open", "--doctor"]).is_err());
     }
 }

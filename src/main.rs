@@ -59,6 +59,14 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Cli) -> Result<(), ApiError> {
+    // 0. Handle shell completions generation
+    if let Some(shell) = args.completions {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        clap_complete::generate(shell, &mut cmd, "rgc-cli", &mut std::io::stdout());
+        return Ok(());
+    }
+
     // 0. Handle MCP stdio server mode
     if args.mcp {
         mcp::run_mcp_server()
@@ -148,6 +156,32 @@ fn run(args: Cli) -> Result<(), ApiError> {
 
     let is_stdout = destination == OutputDestination::Stdout;
 
+    if args.open && is_stdout {
+        return Err(ApiError::new(
+            ErrorCode::BadArgs,
+            "Cannot use '--open' when streaming screenshot to stdout ('-o -').",
+        )
+        .with_stage("argument_validation")
+        .with_suggestion("Omit '-o -' or specify a file path instead of stdout to use --open."));
+    }
+
+    if args.open
+        && args.clipboard
+        && destination == OutputDestination::Auto
+        && args.output.is_none()
+        && args.output_file.is_none()
+        && args.output_dir.is_none()
+    {
+        return Err(ApiError::new(
+            ErrorCode::BadArgs,
+            "Cannot use '--open' in clipboard-only mode: no file was saved to disk.",
+        )
+        .with_stage("argument_validation")
+        .with_suggestion(
+            "Specify an output file destination with -o or --output-file when using --open.",
+        ));
+    }
+
     // R-01: Prohibit combining --json with -o - (stdout) to prevent stream corruption
     if is_stdout && args.json {
         return Err(ApiError::new(
@@ -216,6 +250,10 @@ fn run(args: Cli) -> Result<(), ApiError> {
 
         if !args.quiet && !args.json {
             println!("Screenshot successfully saved to: {}", saved_path.display());
+        }
+
+        if args.open {
+            output::open_file_in_viewer(&saved_path)?;
         }
 
         saved_path_buf = Some(saved_path);

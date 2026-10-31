@@ -65,6 +65,8 @@ cargo build --release
       --scale <FACTOR>        按比例缩放图像 (0.01 到 1.0 之间，例如 0.5 缩小一半)
       --max-dimension <PX>    限制图像最大宽度或高度 (像素)，保持原始纵横比
       --quality <1-100>       JPEG 输出压缩质量 (1-100，默认 85)
+      --open                  截图保存后自动调用系统默认查看器打开
+      --completions <SHELL>   生成终端 Tab 自动补全脚本到 stdout [可选: bash, elvish, fish, powershell, zsh]
       --json                  以结构化 JSON 格式输出结果 (非常适合自动化与 AI 智能体)
   -v, --verbose               启用详细/调试日志
   -q, --quiet                 静默模式，抑制非错误信息
@@ -193,6 +195,22 @@ rgc-cli --max-dimension 1280 -o preview.png
 
 # 指定 JPEG 压缩质量为 80
 rgc-cli -f jpeg --quality 80 -o shot.jpg
+```
+
+#### 11. 截图后自动调用系统默认看图工具打开
+```bash
+# 截取并在系统默认照片/看图软件中即时打开
+rgc-cli --open -o shot.png
+```
+
+#### 12. 生成终端 Tab 自动补全脚本
+```bash
+# 自动为 PowerShell 会话注入补全
+rgc-cli --completions powershell | Out-String | Invoke-Expression
+
+# 为 Linux/macOS Bash 或 Zsh 写入补全文件
+rgc-cli --completions bash > /etc/bash_completion.d/rgc-cli
+rgc-cli --completions zsh > "${fpath[1]}/_rgc-cli"
 ```
 
 #### 10. 运行系统诊断检查

@@ -48,6 +48,9 @@ pub enum OutputError {
 
     #[error("Invalid destination path: {0}")]
     InvalidPath(String),
+
+    #[error("Failed to open default image viewer: {0}")]
+    OpenViewerFailed(String),
 }
 
 /// Standardized error codes for machine-readable JSON responses and process exit codes.
@@ -159,6 +162,9 @@ impl From<OutputError> for ApiError {
             OutputError::InvalidPath(msg) => ApiError::new(ErrorCode::BadArgs, msg)
                 .with_stage("argument_validation")
                 .with_suggestion("Provide a valid file or directory destination."),
+            OutputError::OpenViewerFailed(msg) => ApiError::new(ErrorCode::IoError, msg)
+                .with_stage("viewer_launch")
+                .with_suggestion("Ensure a default image viewer is configured on your system."),
         }
     }
 }
@@ -562,6 +568,39 @@ pub fn save_image(
     }
 
     Ok(file_path)
+}
+
+/// Opens a saved image file using the system's default image viewer.
+pub fn open_file_in_viewer(path: &Path) -> Result<(), OutputError> {
+    use std::process::Command;
+
+    debug!("Opening file in default viewer: {:?}", path);
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| OutputError::OpenViewerFailed(e.to_string()))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| OutputError::OpenViewerFailed(e.to_string()))?;
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| OutputError::OpenViewerFailed(e.to_string()))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
