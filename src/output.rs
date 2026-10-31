@@ -574,12 +574,22 @@ pub fn save_image(
 pub fn open_file_in_viewer(path: &Path) -> Result<(), OutputError> {
     use std::process::Command;
 
-    debug!("Opening file in default viewer: {:?}", path);
+    // Ensure relative paths are resolved to absolute coordinates so system viewers (especially Windows Explorer)
+    // resolve the file against current working directory rather than the system or user directory.
+    let target_path = if path.is_relative() {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
+
+    debug!("Opening file in default viewer: {:?}", target_path);
 
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer")
-            .arg(path)
+            .arg(&target_path)
             .spawn()
             .map_err(|e| OutputError::OpenViewerFailed(e.to_string()))?;
     }
@@ -587,7 +597,7 @@ pub fn open_file_in_viewer(path: &Path) -> Result<(), OutputError> {
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
-            .arg(path)
+            .arg(&target_path)
             .spawn()
             .map_err(|e| OutputError::OpenViewerFailed(e.to_string()))?;
     }
@@ -595,7 +605,7 @@ pub fn open_file_in_viewer(path: &Path) -> Result<(), OutputError> {
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         Command::new("xdg-open")
-            .arg(path)
+            .arg(&target_path)
             .spawn()
             .map_err(|e| OutputError::OpenViewerFailed(e.to_string()))?;
     }
