@@ -63,8 +63,8 @@ jobs:
       - name: Package release archive (UNIX)
         if: runner.os != 'Windows'
         run: |
-          BIN="target/${{ matrix.target }}/release/${{ matrix.bin_name }}"
-          tar -czf "${{ matrix.archive_name }}" -C "target/${{ matrix.target }}/release" "${{ matrix.bin_name }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" .
+          tar -czf "${{ matrix.archive_name }}" "${{ matrix.bin_name }}" README.md README_zh.md LICENSE
           shasum -a 256 "${{ matrix.archive_name }}" > "${{ matrix.archive_name }}.sha256"
 
       - name: Upload binaries to GitHub Release
