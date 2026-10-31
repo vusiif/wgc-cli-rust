@@ -1,5 +1,6 @@
 # rgc-cli (Rust Graphics Capture)
 
+[![CI](https://github.com/vusiif/wgc-cli-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/vusiif/wgc-cli-rust/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/vusiif/wgc-cli-rust)
