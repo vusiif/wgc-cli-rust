@@ -62,6 +62,9 @@ Options:
   -c, --clipboard             Copy screenshot directly to system clipboard
   -d, --delay <MS>            Delay before capturing in milliseconds (e.g. 1000 for 1 second)
   -f, --format <FORMAT>       Output image format. If omitted, inferred from file extension [possible values: png, jpeg, webp]
+      --scale <FACTOR>        Downscale image by a factor between 0.01 and 1.0 (e.g. 0.5 for half resolution)
+      --max-dimension <PX>    Constrain maximum width or height to PX pixels, preserving aspect ratio
+      --quality <1-100>       Compression quality for JPEG output (1-100, defaults to 85)
       --json                  Output result as structured JSON (ideal for automation & AI agents)
   -v, --verbose               Enable verbose / debug logging
   -q, --quiet                 Suppress non-error output
@@ -178,6 +181,18 @@ rgc-cli -d 1500 -r 200,200,600,400 -o cropped.png
 #### 9. Exact 1:1 physical pixel crop
 ```bash
 rgc-cli --coords physical -r 0,0,1920,1080 -o raw_pixels.png
+```
+
+#### 10. Downscaling and Quality (AI Token & Bandwidth Optimization)
+```bash
+# Half-resolution capture (e.g. 3840x2160 -> 1920x1080, reducing payload size by ~75%)
+rgc-cli --scale 0.5 -o shot.webp
+
+# Constrain image maximum edge to 1280px preserving aspect ratio
+rgc-cli --max-dimension 1280 -o preview.png
+
+# JPEG output with custom compression quality
+rgc-cli -f jpeg --quality 80 -o shot.jpg
 ```
 
 #### 10. Run system diagnostics

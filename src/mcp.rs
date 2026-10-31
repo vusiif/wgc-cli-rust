@@ -4,7 +4,7 @@ use crate::doctor;
 use crate::output::{self, OutputDestination};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Cursor, Write};
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -220,6 +220,18 @@ pub fn handle_mcp_message(line: &str) -> Option<String> {
                                 "enum": ["png", "jpeg", "webp"],
                                 "description": "Image format ('png', 'jpeg', or 'webp'). Defaults to 'png'."
                             },
+                            "scale": {
+                                "type": "number",
+                                "description": "Optional downscale factor between 0.01 and 1.0 (e.g. 0.5 for half resolution to reduce bandwidth/tokens)."
+                            },
+                            "maxDimension": {
+                                "type": "integer",
+                                "description": "Optional maximum width or height in pixels (preserves aspect ratio)."
+                            },
+                            "quality": {
+                                "type": "integer",
+                                "description": "Optional JPEG compression quality (1-100, defaults to 85)."
+                            },
                             "outputPath": {
                                 "type": "string",
                                 "description": "Optional file path to write image to disk. If omitted, image is returned as base64."
@@ -404,6 +416,50 @@ fn execute_capture_tool(arguments: &serde_json::Value) -> ToolCallResult {
         _ => ImageFormat::Png,
     };
 
+    let scale = arguments.get("scale").and_then(|v| v.as_f64());
+    if let Some(s) = scale {
+        if !s.is_finite() || s <= 0.0 || s > 1.0 {
+            return ToolCallResult {
+                content: vec![ToolContent::Text {
+                    text: format!(
+                        "Invalid scale '{s}': expected a positive number between 0.01 and 1.0"
+                    ),
+                }],
+                is_error: true,
+            };
+        }
+    }
+
+    let max_dimension = arguments
+        .get("maxDimension")
+        .and_then(|v| v.as_u64())
+        .map(|d| d as u32);
+    if let Some(d) = max_dimension {
+        if d == 0 {
+            return ToolCallResult {
+                content: vec![ToolContent::Text {
+                    text: "Invalid maxDimension: must be greater than 0".to_string(),
+                }],
+                is_error: true,
+            };
+        }
+    }
+
+    let quality = arguments
+        .get("quality")
+        .and_then(|v| v.as_u64())
+        .map(|q| q as u8);
+    if let Some(q) = quality {
+        if q == 0 || q > 100 {
+            return ToolCallResult {
+                content: vec![ToolContent::Text {
+                    text: "Invalid quality: must be between 1 and 100".to_string(),
+                }],
+                is_error: true,
+            };
+        }
+    }
+
     let output_path = arguments
         .get("outputPath")
         .and_then(|v| v.as_str())
@@ -435,11 +491,13 @@ fn execute_capture_tool(arguments: &serde_json::Value) -> ToolCallResult {
         }
     };
 
+    let image = output::apply_image_transforms(image, scale, max_dimension);
+
     let mut content = Vec::new();
 
     if let Some(ref path) = output_path {
         let destination = OutputDestination::File(path.clone());
-        let saved_path = match output::save_image(&image, &destination, format) {
+        let saved_path = match output::save_image(&image, &destination, format, quality) {
             Ok(p) => p,
             Err(e) => {
                 return ToolCallResult {
@@ -456,24 +514,19 @@ fn execute_capture_tool(arguments: &serde_json::Value) -> ToolCallResult {
     }
 
     if return_base64 {
-        let initial_capacity = (image.width() as usize * image.height() as usize).min(1024 * 1024);
-        let mut buffer = Vec::with_capacity(initial_capacity);
-        let img_fmt = match format {
-            ImageFormat::Png => image::ImageFormat::Png,
-            ImageFormat::Jpeg => image::ImageFormat::Jpeg,
-            ImageFormat::Webp => image::ImageFormat::WebP,
+        let bytes = match output::encode_image_bytes(&image, format, quality) {
+            Ok(b) => b,
+            Err(e) => {
+                return ToolCallResult {
+                    content: vec![ToolContent::Text {
+                        text: format!("Failed to encode image as {format:?}: {e}"),
+                    }],
+                    is_error: true,
+                };
+            }
         };
 
-        if let Err(e) = image.write_to(&mut Cursor::new(&mut buffer), img_fmt) {
-            return ToolCallResult {
-                content: vec![ToolContent::Text {
-                    text: format!("Failed to encode image as {format:?}: {e}"),
-                }],
-                is_error: true,
-            };
-        }
-
-        let b64 = base64_encode(&buffer);
+        let b64 = base64_encode(&bytes);
         let mime_type = match format {
             ImageFormat::Png => "image/png",
             ImageFormat::Jpeg => "image/jpeg",
@@ -490,7 +543,7 @@ fn execute_capture_tool(arguments: &serde_json::Value) -> ToolCallResult {
                 image.width(),
                 image.height(),
                 format,
-                buffer.len()
+                bytes.len()
             ),
         });
     }
@@ -667,6 +720,24 @@ mod tests {
         assert!(
             resp.contains("either 'outputPath' must be provided or 'returnBase64' must be true")
         );
+    }
+
+    #[test]
+    fn test_handle_mcp_tool_call_invalid_scale_quality() {
+        let req_scale = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"capture_screen","arguments":{"scale":1.5}}}"#;
+        let resp_scale = handle_mcp_message(req_scale).expect("response expected");
+        assert!(resp_scale.contains(r#""isError":true"#));
+        assert!(resp_scale.contains("Invalid scale"));
+
+        let req_dim = r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"capture_screen","arguments":{"maxDimension":0}}}"#;
+        let resp_dim = handle_mcp_message(req_dim).expect("response expected");
+        assert!(resp_dim.contains(r#""isError":true"#));
+        assert!(resp_dim.contains("Invalid maxDimension"));
+
+        let req_quality = r#"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"capture_screen","arguments":{"quality":105}}}"#;
+        let resp_quality = handle_mcp_message(req_quality).expect("response expected");
+        assert!(resp_quality.contains(r#""isError":true"#));
+        assert!(resp_quality.contains("Invalid quality"));
     }
 
     #[test]

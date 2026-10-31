@@ -184,6 +184,8 @@ fn run(args: Cli) -> Result<(), ApiError> {
         args.monitor, args.region, args.coords
     );
     let dynamic_image = capture::capture_screen(args.monitor, args.region.as_ref(), args.coords)?;
+    let dynamic_image =
+        output::apply_image_transforms(dynamic_image, args.scale, args.max_dimension);
     let img_width = dynamic_image.width();
     let img_height = dynamic_image.height();
 
@@ -204,9 +206,9 @@ fn run(args: Cli) -> Result<(), ApiError> {
     let mut file_size_bytes = None;
 
     if is_stdout {
-        output::write_to_stdout(&dynamic_image, format)?;
+        output::write_to_stdout(&dynamic_image, format, args.quality)?;
     } else if destination != OutputDestination::Auto || !args.clipboard {
-        let saved_path = output::save_image(&dynamic_image, &destination, format)?;
+        let saved_path = output::save_image(&dynamic_image, &destination, format, args.quality)?;
 
         if let Ok(meta) = fs::metadata(&saved_path) {
             file_size_bytes = Some(meta.len());

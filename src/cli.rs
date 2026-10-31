@@ -394,7 +394,9 @@ mod tests {
         assert_eq!(cli_dim.max_dimension, Some(1920));
 
         // Conflict: --scale and --max-dimension
-        assert!(Cli::try_parse_from(["rgc-cli", "--scale", "0.5", "--max-dimension", "1920"]).is_err());
+        assert!(
+            Cli::try_parse_from(["rgc-cli", "--scale", "0.5", "--max-dimension", "1920"]).is_err()
+        );
 
         // Invalid scale > 1.0 or <= 0.0
         assert!(Cli::try_parse_from(["rgc-cli", "--scale", "1.5"]).is_err());

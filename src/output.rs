@@ -353,25 +353,89 @@ pub fn copy_to_clipboard(image: &DynamicImage) -> Result<(), OutputError> {
     Ok(())
 }
 
-/// Write encoded image bytes directly to standard output (stdout stream).
-pub fn write_to_stdout(image: &DynamicImage, format: ImageFormat) -> Result<(), OutputError> {
-    use std::io::{Cursor, Write};
+/// Applies scaling factor or max dimension constraint to captured image.
+pub fn apply_image_transforms(
+    image: DynamicImage,
+    scale: Option<f64>,
+    max_dimension: Option<u32>,
+) -> DynamicImage {
+    if let Some(factor) = scale {
+        let new_w = ((image.width() as f64) * factor).round().max(1.0) as u32;
+        let new_h = ((image.height() as f64) * factor).round().max(1.0) as u32;
+        debug!(
+            "Resizing image from {}x{} to {}x{} (scale: {:.2})",
+            image.width(),
+            image.height(),
+            new_w,
+            new_h,
+            factor
+        );
+        return image.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3);
+    }
+    if let Some(max_dim) = max_dimension {
+        if image.width() > max_dim || image.height() > max_dim {
+            debug!(
+                "Constraining image to max dimension {}px from {}x{}",
+                max_dim,
+                image.width(),
+                image.height()
+            );
+            return image.resize(max_dim, max_dim, image::imageops::FilterType::Lanczos3);
+        }
+    }
+    image
+}
 
-    debug!("Streaming encoded image ({:?}) to stdout", format);
-    let mut out = stdout().lock();
-    let image_format = match format {
-        ImageFormat::Png => image::ImageFormat::Png,
-        ImageFormat::Jpeg => image::ImageFormat::Jpeg,
-        ImageFormat::Webp => image::ImageFormat::WebP,
-    };
+/// Encodes DynamicImage into byte buffer using specified format and optional JPEG quality.
+pub fn encode_image_bytes(
+    image: &DynamicImage,
+    format: ImageFormat,
+    quality: Option<u8>,
+) -> Result<Vec<u8>, OutputError> {
+    use std::io::Cursor;
 
     let initial_capacity = (image.width() as usize * image.height() as usize).min(1024 * 1024);
     let mut buffer = Cursor::new(Vec::with_capacity(initial_capacity));
-    image
-        .write_to(&mut buffer, image_format)
-        .map_err(OutputError::StdoutFailed)?;
 
-    if let Err(e) = out.write_all(buffer.get_ref()) {
+    match format {
+        ImageFormat::Png => {
+            image
+                .write_to(&mut buffer, image::ImageFormat::Png)
+                .map_err(OutputError::StdoutFailed)?;
+        }
+        ImageFormat::Webp => {
+            image
+                .write_to(&mut buffer, image::ImageFormat::WebP)
+                .map_err(OutputError::StdoutFailed)?;
+        }
+        ImageFormat::Jpeg => {
+            let q = quality.unwrap_or(85);
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, q);
+            encoder
+                .encode_image(image)
+                .map_err(OutputError::StdoutFailed)?;
+        }
+    }
+
+    Ok(buffer.into_inner())
+}
+
+/// Write encoded image bytes directly to standard output (stdout stream).
+pub fn write_to_stdout(
+    image: &DynamicImage,
+    format: ImageFormat,
+    quality: Option<u8>,
+) -> Result<(), OutputError> {
+    use std::io::Write;
+
+    debug!(
+        "Streaming encoded image ({:?}, quality={:?}) to stdout",
+        format, quality
+    );
+    let mut out = stdout().lock();
+    let bytes = encode_image_bytes(image, format, quality)?;
+
+    if let Err(e) = out.write_all(&bytes) {
         if e.kind() == std::io::ErrorKind::BrokenPipe {
             debug!("Downstream pipe closed by consumer (BrokenPipe)");
             return Ok(());
@@ -463,27 +527,39 @@ pub fn resolve_output_path(
     }
 }
 
-/// Save a `DynamicImage` to the filesystem destination.
+/// Save a `DynamicImage` to the filesystem destination with optional JPEG quality.
 pub fn save_image(
     image: &DynamicImage,
     destination: &OutputDestination,
     format: ImageFormat,
+    quality: Option<u8>,
 ) -> Result<PathBuf, OutputError> {
     let file_path = resolve_output_path(destination, format)?;
-    debug!("Saving image ({:?}) to: {:?}", format, file_path);
+    debug!(
+        "Saving image ({:?}, quality={:?}) to: {:?}",
+        format, quality, file_path
+    );
 
-    let image_format = match format {
-        ImageFormat::Png => image::ImageFormat::Png,
-        ImageFormat::Jpeg => image::ImageFormat::Jpeg,
-        ImageFormat::Webp => image::ImageFormat::WebP,
-    };
-
-    image
-        .save_with_format(&file_path, image_format)
-        .map_err(|e| OutputError::SaveFailed {
+    if format == ImageFormat::Jpeg && quality.is_some() {
+        let bytes = encode_image_bytes(image, format, quality)?;
+        fs::write(&file_path, bytes).map_err(|e| OutputError::SaveFailed {
             path: file_path.clone(),
-            source: e,
+            source: image::ImageError::IoError(e),
         })?;
+    } else {
+        let image_format = match format {
+            ImageFormat::Png => image::ImageFormat::Png,
+            ImageFormat::Jpeg => image::ImageFormat::Jpeg,
+            ImageFormat::Webp => image::ImageFormat::WebP,
+        };
+
+        image
+            .save_with_format(&file_path, image_format)
+            .map_err(|e| OutputError::SaveFailed {
+                path: file_path.clone(),
+                source: e,
+            })?;
+    }
 
     Ok(file_path)
 }
@@ -619,18 +695,43 @@ mod tests {
         let dynamic = DynamicImage::ImageRgba8(img);
 
         let test_file_png = OutputDestination::File(PathBuf::from("target/test_scratch/test.png"));
-        let saved_png = save_image(&dynamic, &test_file_png, ImageFormat::Png).unwrap();
+        let saved_png = save_image(&dynamic, &test_file_png, ImageFormat::Png, None).unwrap();
         assert_eq!(saved_png, PathBuf::from("target/test_scratch/test.png"));
         assert!(saved_png.exists());
 
         let test_file_webp =
             OutputDestination::File(PathBuf::from("target/test_scratch/test.webp"));
-        let saved_webp = save_image(&dynamic, &test_file_webp, ImageFormat::Webp).unwrap();
+        let saved_webp = save_image(&dynamic, &test_file_webp, ImageFormat::Webp, None).unwrap();
         assert_eq!(saved_webp, PathBuf::from("target/test_scratch/test.webp"));
         assert!(saved_webp.exists());
 
+        let test_file_jpg = OutputDestination::File(PathBuf::from("target/test_scratch/test.jpg"));
+        let saved_jpg = save_image(&dynamic, &test_file_jpg, ImageFormat::Jpeg, Some(75)).unwrap();
+        assert_eq!(saved_jpg, PathBuf::from("target/test_scratch/test.jpg"));
+        assert!(saved_jpg.exists());
+
         // Clean up
         let _ = fs::remove_dir_all("target/test_scratch");
+    }
+
+    #[test]
+    fn test_apply_image_transforms() {
+        let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 50));
+
+        // Scale 0.5x
+        let scaled = apply_image_transforms(img.clone(), Some(0.5), None);
+        assert_eq!(scaled.width(), 50);
+        assert_eq!(scaled.height(), 25);
+
+        // Max dimension 40px
+        let constrained = apply_image_transforms(img.clone(), None, Some(40));
+        assert_eq!(constrained.width(), 40);
+        assert_eq!(constrained.height(), 20);
+
+        // No transforms
+        let unchanged = apply_image_transforms(img, None, None);
+        assert_eq!(unchanged.width(), 100);
+        assert_eq!(unchanged.height(), 50);
     }
 
     #[test]

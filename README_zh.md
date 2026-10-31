@@ -62,6 +62,9 @@ cargo build --release
   -c, --clipboard             将截图直接复制至系统剪贴板
   -d, --delay <MS>            截图前延时等待毫秒数 (例如 1000 表示延时 1 秒)
   -f, --format <FORMAT>       输出图片格式，缺省时自动根据扩展名推断 [可选: png, jpeg, webp]
+      --scale <FACTOR>        按比例缩放图像 (0.01 到 1.0 之间，例如 0.5 缩小一半)
+      --max-dimension <PX>    限制图像最大宽度或高度 (像素)，保持原始纵横比
+      --quality <1-100>       JPEG 输出压缩质量 (1-100，默认 85)
       --json                  以结构化 JSON 格式输出结果 (非常适合自动化与 AI 智能体)
   -v, --verbose               启用详细/调试日志
   -q, --quiet                 静默模式，抑制非错误信息
@@ -178,6 +181,18 @@ rgc-cli -d 1500 -r 200,200,600,400 -o cropped.png
 #### 9. 1:1 绝对物理像素裁剪
 ```bash
 rgc-cli --coords physical -r 0,0,1920,1080 -o raw_pixels.png
+```
+
+#### 10. 图像尺寸缩放与质量控制（优化 AI Token 与传输带宽）
+```bash
+# 50% 等比下采样（例如 3840x2160 -> 1920x1080，体积缩减约 75%）
+rgc-cli --scale 0.5 -o shot.webp
+
+# 限制图片最长边不超过 1280px，保持原始纵横比
+rgc-cli --max-dimension 1280 -o preview.png
+
+# 指定 JPEG 压缩质量为 80
+rgc-cli -f jpeg --quality 80 -o shot.jpg
 ```
 
 #### 10. 运行系统诊断检查
